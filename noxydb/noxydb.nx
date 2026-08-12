@@ -48,7 +48,8 @@ func database_file(db: Database) -> io.File
 end
 
 func fail_write(db: Database) -> void
-    io.close_result(database_file(db))
+    let file: io.File = database_file(db)
+    io.close_result(file)
     db.state.open = false
     db.state.error = "failed to write database log"
 end
@@ -103,7 +104,8 @@ func close_database(db: Database) -> void
         return
     end
 
-    let result: io.IOCloseResult = io.close_result(database_file(db))
+    let file: io.File = database_file(db)
+    let result: io.IOCloseResult = io.close_result(file)
     db.state.open = false
     if !result.success then
         db.state.error = "failed to close database log"

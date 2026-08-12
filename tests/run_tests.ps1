@@ -8,7 +8,7 @@ $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $noxyExe = $env:NOXY_EXE
 
 if ([string]::IsNullOrWhiteSpace($noxyExe)) {
-    $noxyExe = (Resolve-Path (Join-Path $projectRoot "..\..\go_projects\noxy\noxy.exe")).Path
+    throw "Set NOXY_EXE to a Noxy executable that includes io.write_result and io.close_result"
 }
 
 if (-not (Test-Path -LiteralPath $noxyExe -PathType Leaf)) {

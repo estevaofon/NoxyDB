@@ -18,6 +18,10 @@ io.close_result(file) -> io.IOCloseResult
 ```
 
 As APIs anteriores `io.write()` e `io.close()` continuam compatíveis.
+Como `File` é passado por valor na API do módulo, `close_result()` torna o erro
+de `Close` observável pelo resultado, mas não promete atualizar o campo
+`open` da variável `File` do chamador. O NoxyDB mantém seu próprio estado
+`DatabaseState.open`.
 
 ## Uso
 
@@ -145,6 +149,9 @@ I/O observável:
 $env:NOXY_EXE = "D:\caminho\para\noxy.exe"
 ./tests/run_tests.ps1
 ```
+
+`NOXY_EXE` é obrigatório. O runner não usa automaticamente outro checkout da
+Noxy, evitando testar por engano um executável sem a evolução de I/O requerida.
 
 Cada writer/reader de persistência roda em um processo Noxy separado. A suíte
 cobre API em memória, sobrescritas, valor vazio, múltiplas chaves, tombstones,
