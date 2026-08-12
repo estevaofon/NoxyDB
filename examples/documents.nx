@@ -1,0 +1,91 @@
+use io
+use sys
+use noxydb
+
+func fail(message: string) -> void
+    print("[ERROR] " + message)
+    sys.exit(1)
+end
+
+func require_put(result: noxydb.PutResult, operation: string) -> void
+    if !result.success then
+        fail(operation + ": " + result.error)
+    end
+end
+
+let path: string = "examples/noxydb_v02.db"
+if io.exists(path) then io.remove(path) end
+
+print("=== NoxyDB v0.2: documentos JSON ===")
+let db: noxydb.Database = noxydb.open_database(path)
+if !noxydb.is_open(db) then
+    fail("não foi possível abrir o banco: " + noxydb.database_error(db))
+end
+
+let profile: map[string, any] = {"city": "Cuiabá", "country": "Brasil"}
+let first_project: map[string, any] = {"name": "Noxy", "year": 2026}
+let second_project: map[string, any] = {"name": "NoxyDB", "year": 2026}
+let projects: any[] = [first_project, second_project]
+let user: map[string, any] = {
+    "name": "Estevão",
+    "age": 30,
+    "score": 9.5,
+    "active": true,
+    "nickname": null,
+    "languages": ["Python", "Noxy"],
+    "profile": profile,
+    "projects": projects
+}
+require_put(noxydb.put(db, "user:1", user), "falha ao gravar user:1")
+
+let settings: map[string, any] = {"theme": "dark", "notifications": true}
+require_put(noxydb.put(db, "settings", settings), "falha ao gravar settings")
+print("Documentos gravados: user:1 e settings")
+
+let loaded: noxydb.LookupResult = noxydb.get(db, "user:1")
+if !loaded.found then fail("user:1 não foi encontrado") end
+let loaded_profile: map[string, any] = loaded.value["profile"]
+let loaded_projects: any[] = loaded.value["projects"]
+let loaded_first_project: map[string, any] = loaded_projects[0]
+print("Nome: " + to_str(loaded.value["name"]))
+print("Idade: " + to_str(loaded.value["age"]))
+print("Cidade: " + to_str(loaded_profile["city"]))
+print("Primeiro projeto: " + to_str(loaded_first_project["name"]))
+
+let replacement_profile: map[string, any] = {"city": "São Paulo"}
+let replacement: map[string, any] = {
+    "name": "Estevão Fonseca",
+    "active": false,
+    "profile": replacement_profile
+}
+require_put(noxydb.put(db, "user:1", replacement), "falha ao substituir user:1")
+let replaced: noxydb.LookupResult = noxydb.get(db, "user:1")
+if !replaced.found then fail("user:1 desapareceu após a substituição") end
+if has_key(replaced.value, "age") then fail("put deveria substituir o documento completo") end
+print("Documento substituído; o campo age anterior não existe mais")
+
+noxydb.remove(db, "settings")
+if noxydb.exists(db, "settings") then fail("settings deveria ter sido removido") end
+print("Documento settings removido")
+
+noxydb.close_database(db)
+if noxydb.database_error(db) != "" then
+    fail("falha ao fechar o banco: " + noxydb.database_error(db))
+end
+
+let reopened: noxydb.Database = noxydb.open_database(path)
+if !noxydb.is_open(reopened) then
+    fail("falha no replay: " + noxydb.database_error(reopened))
+end
+let persisted: noxydb.LookupResult = noxydb.get(reopened, "user:1")
+if !persisted.found then fail("user:1 não sobreviveu ao replay") end
+if persisted.value["name"] != "Estevão Fonseca" then fail("replay retornou a versão errada") end
+if noxydb.exists(reopened, "settings") then fail("remoção não sobreviveu ao replay") end
+print("Replay confirmado: substituição e remoção foram persistidas")
+
+noxydb.close_database(reopened)
+if noxydb.database_error(reopened) != "" then
+    fail("falha ao fechar o banco reaberto: " + noxydb.database_error(reopened))
+end
+print("Banco mantido em " + path)
+print("=== Exemplo concluído ===")

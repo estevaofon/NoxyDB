@@ -67,6 +67,20 @@ end
 noxydb.close_database(db)
 ```
 
+## Exemplo executável
+
+O walkthrough completo em `examples/documents.nx` demonstra documentos
+aninhados, leitura, substituição completa, remoção e replay:
+
+```powershell
+$env:NOXY_EXE = "D:\caminho\para\noxy.exe"
+& $env:NOXY_EXE examples/documents.nx
+```
+
+O exemplo recria `examples/noxydb_v02.db` a cada execução e mantém o arquivo ao
+final para inspeção. Bancos gerados dentro de `examples/` são ignorados pelo
+Git.
+
 ## API
 
 NoxyDB v0.2 maps string keys to JSON objects represented as
