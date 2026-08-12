@@ -14,18 +14,26 @@ máquina virtual e de sua biblioteca padrão.
 flowchart LR
     App["Aplicação Noxy"] --> API["Database API<br/>open_database · put · get<br/>remove · exists · close_database"]
 
-    API -- "GET / EXISTS" --> State["DatabaseState<br/>map[string, string]<br/>open · error · file_fd"]
-
-    API -- "PUT / REMOVE" --> Encode["Storage<br/>codifica registro em hexadecimal"]
+    API -- "PUT: map[string, any]" --> Serialize["document.nx<br/>serialize"]
+    Serialize -- "JSON estrito" --> Encode["storage.nx<br/>payload opaco · registro hexadecimal"]
+    API -- "REMOVE" --> Encode
     Encode --> Write["io.write_result<br/>append antes da mutação"]
-    Write -- "sucesso" --> State
+    Write -- "sucesso" --> State["DatabaseState bruto<br/>map[string, string]<br/>open · error · file_fd"]
     Write -- "falha" --> Failed["Banco fechado<br/>failed to write database log"]
+
+    API -- "GET: lê payload" --> State
+    State -- "JSON serializado" --> Deserialize["document.nx<br/>deserialize"]
+    Deserialize -- "novo map[string, any]" --> API
+    API -- "EXISTS" --> State
 
     Write --> Log[("Append-only log<br/>P key value · D key")]
 
     Log -- "open_database" --> Read["Leitura integral<br/>validação de tamanho"]
     Read --> Replay["Replay estrito<br/>valida e aplica em ordem"]
-    Replay --> State
+    Replay --> Validate["document.deserialize<br/>validação final de todos os payloads"]
+    Validate -- "todos válidos" --> AppendOpen["Abre o log para append"]
+    AppendOpen --> State
+    Validate -- "inválido" --> Invalid["Banco fechado<br/>invalid document payload<br/>estado bruto vazio"]
 
     API -- "close_database" --> Close["io.close_result"]
     Close -- "sucesso" --> Closed["Banco fechado normalmente"]
