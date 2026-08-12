@@ -15,7 +15,13 @@ if (-not (Test-Path -LiteralPath $noxyExe -PathType Leaf)) {
     throw "Noxy executable not found: $noxyExe"
 }
 
-$coreTests = @("database_test.nx", "write_failure_test.nx", "close_failure_test.nx", "document_codec_test.nx", "document_isolation_test.nx")
+$coreTests = @(
+    "database_test.nx",
+    "document_codec_test.nx",
+    "document_isolation_test.nx",
+    "write_failure_test.nx",
+    "close_failure_test.nx"
+)
 $persistenceTests = @(
     "persistence_write_test.nx",
     "persistence_read_test.nx",
@@ -25,7 +31,12 @@ $persistenceTests = @(
     "history_read_test.nx",
     "empty_database_test.nx"
 )
-$errorTests = @("invalid_log_test.nx", "open_failure_test.nx", "read_size_test.nx")
+$errorTests = @(
+    "invalid_log_test.nx",
+    "invalid_document_log_test.nx",
+    "open_failure_test.nx",
+    "read_size_test.nx"
+)
 
 $tests = if (-not [string]::IsNullOrWhiteSpace($Test)) {
     @($Test)

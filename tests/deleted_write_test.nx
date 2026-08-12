@@ -2,13 +2,12 @@ use io
 use noxydb
 
 let path: string = "tests/deleted.db"
-if io.exists(path) then
-    io.remove(path)
-end
-
+if io.exists(path) then io.remove(path) end
 let db: noxydb.Database = noxydb.open_database(path)
-noxydb.put(db, "language", "Noxy")
-noxydb.put(db, "author", "Estevao")
+let language: map[string, any] = {"name": "Noxy"}
+let author: map[string, any] = {"name": "Estevao"}
+noxydb.put(db, "language", language)
+noxydb.put(db, "author", author)
 noxydb.remove(db, "author")
 noxydb.close_database(db)
 print("[PASS] deleted_write_test")

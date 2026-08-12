@@ -3,18 +3,29 @@ use noxydb
 use tests.assertions as assertions
 
 let path: string = "tests/persistence.db"
-if io.exists(path) then
-    io.remove(path)
-end
-
+if io.exists(path) then io.remove(path) end
 let db: noxydb.Database = noxydb.open_database(path)
-assertions.assert_true(noxydb.is_open(db), "persistence writer should open the database")
-noxydb.put(db, "language", "Noxy")
-noxydb.put(db, "version", "1")
-noxydb.put(db, "version", "2")
-noxydb.put(db, "author", "Estevao")
-noxydb.put(db, "empty", "")
-noxydb.put(db, "chave\tcom\nção", "valor\tcom\nUnicode 🐍")
+assertions.assert_true(noxydb.is_open(db), "persistence writer should open")
+let profile: map[string, any] = {"city": "Cuiabá"}
+let first: map[string, any] = {"id": 1}
+let second: map[string, any] = {"id": 2}
+let records: any[] = [first, second]
+let value: map[string, any] = {
+    "name": "Estevão",
+    "empty": "",
+    "age": 30,
+    "score": 9.5,
+    "active": true,
+    "nothing": null,
+    "languages": ["Python", "Noxy"],
+    "profile": profile,
+    "records": records
+}
+assertions.assert_true(noxydb.put(db, "chave\tcom\nção", value).success, "document should store")
+let version_one: map[string, any] = {"number": 1}
+let version_two: map[string, any] = {"number": 2}
+assertions.assert_true(noxydb.put(db, "version", version_one).success, "first version should store")
+assertions.assert_true(noxydb.put(db, "version", version_two).success, "replacement should store")
 noxydb.close_database(db)
-assertions.assert_string(noxydb.database_error(db), "", "persistence writer should close normally")
+assertions.assert_string(noxydb.database_error(db), "", "writer should close normally")
 print("[PASS] persistence_write_test")

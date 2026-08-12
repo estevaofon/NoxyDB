@@ -4,28 +4,22 @@ use tests.assertions as assertions
 
 let path: string = "tests/persistence.db"
 let db: noxydb.Database = noxydb.open_database(path)
-assertions.assert_true(noxydb.is_open(db), "persistence reader should open the database")
-
-let language: noxydb.LookupResult = noxydb.get(db, "language")
-assertions.assert_true(language.found, "language should survive a new process")
-assertions.assert_string(language.value, "Noxy", "language should retain its value")
-
+assertions.assert_true(noxydb.is_open(db), "persistence reader should open")
+let result: noxydb.LookupResult = noxydb.get(db, "chave\tcom\nção")
+assertions.assert_true(result.found, "Unicode key should survive")
+let profile: map[string, any] = result.value["profile"]
+let records: any[] = result.value["records"]
+let first: map[string, any] = records[0]
+assertions.assert_true(result.value["name"] == "Estevão", "Unicode value should survive")
+assertions.assert_true(result.value["empty"] == "", "empty string should survive")
+assertions.assert_true(result.value["age"] == 30, "integer should survive")
+assertions.assert_true(result.value["score"] == 9.5, "float should survive")
+assertions.assert_true(result.value["active"] == true, "bool should survive")
+assertions.assert_true(result.value["nothing"] == null, "null should survive")
+assertions.assert_true(profile["city"] == "Cuiabá", "nested object should survive")
+assertions.assert_true(first["id"] == 1, "array of objects should survive")
 let version: noxydb.LookupResult = noxydb.get(db, "version")
-assertions.assert_true(version.found, "version should survive a new process")
-assertions.assert_string(version.value, "2", "latest overwritten version should survive")
-
-let author: noxydb.LookupResult = noxydb.get(db, "author")
-assertions.assert_true(author.found, "multiple keys should survive")
-assertions.assert_string(author.value, "Estevao", "author should retain its value")
-
-let empty: noxydb.LookupResult = noxydb.get(db, "empty")
-assertions.assert_true(empty.found, "empty value should remain distinct from absence")
-assertions.assert_string(empty.value, "", "empty value should survive")
-
-let escaped: noxydb.LookupResult = noxydb.get(db, "chave\tcom\nção")
-assertions.assert_true(escaped.found, "Unicode and control characters should survive in keys")
-assertions.assert_string(escaped.value, "valor\tcom\nUnicode 🐍", "Unicode and control characters should survive in values")
-
+assertions.assert_true(version.value["number"] == 2, "latest overwrite should survive")
 noxydb.close_database(db)
 io.remove(path)
 print("[PASS] persistence_read_test")

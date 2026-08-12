@@ -29,12 +29,28 @@ func failed_database(path: string, error: string) -> Database
     return Database(DatabaseState(payloads, 0, path, false, error))
 end
 
+func payloads_are_valid(payloads: map[string, string]) -> bool
+    let payload_keys: string[] = keys(payloads)
+    let index: int = 0
+    while index < length(payload_keys) do
+        let decoded: document.DeserializeResult = document.deserialize(payloads[payload_keys[index]])
+        if !decoded.success then
+            return false
+        end
+        index = index + 1
+    end
+    return true
+end
+
 func open_database(path: string) -> Database
     let payloads: map[string, string]
     if io.exists(path) then
         let replay_result: storage.ReplayResult = storage.replay(path)
         if !replay_result.success then
             return failed_database(path, replay_result.error)
+        end
+        if !payloads_are_valid(replay_result.payloads) then
+            return failed_database(path, "invalid document payload")
         end
         payloads = replay_result.payloads
     end

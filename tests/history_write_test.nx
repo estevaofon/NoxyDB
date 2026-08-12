@@ -2,15 +2,16 @@ use io
 use noxydb
 
 let path: string = "tests/history.db"
-if io.exists(path) then
-    io.remove(path)
-end
-
+if io.exists(path) then io.remove(path) end
 let db: noxydb.Database = noxydb.open_database(path)
-noxydb.put(db, "version", "1")
-noxydb.put(db, "version", "2")
-noxydb.put(db, "version", "3")
+let one: map[string, any] = {"number": 1}
+let two: map[string, any] = {"number": 2}
+let three: map[string, any] = {"number": 3}
+let four: map[string, any] = {"number": 4}
+noxydb.put(db, "version", one)
+noxydb.put(db, "version", two)
+noxydb.put(db, "version", three)
 noxydb.remove(db, "version")
-noxydb.put(db, "version", "4")
+noxydb.put(db, "version", four)
 noxydb.close_database(db)
 print("[PASS] history_write_test")
