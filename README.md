@@ -83,6 +83,18 @@ O exemplo recria `examples/noxydb_v02.db` a cada execução e mantém o arquivo 
 final para inspeção. Bancos gerados dentro de `examples/` são ignorados pelo
 Git.
 
+### Cadastro interativo de usuários
+
+`examples/cadastro_usuarios.nx` porta o cadastro SQLite original para NoxyDB.
+Cada usuário ocupa uma chave própria, enquanto `usuarios:meta` mantém o próximo
+ID e o índice usado pela listagem:
+
+```powershell
+& $env:NOXY_EXE examples/cadastro_usuarios.nx
+```
+
+O banco fica em `examples/usuarios.db` e é ignorado pelo Git.
+
 ## API
 
 NoxyDB v0.2 maps string keys to JSON objects represented as
