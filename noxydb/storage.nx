@@ -3,7 +3,7 @@ use strings
 
 struct ReplayResult
     success: bool
-    entries: map[string, string]
+    payloads: map[string, string]
     error: string
 end
 
@@ -32,29 +32,29 @@ func read_size_matches(content: string, expected_size: int) -> bool
 end
 
 func replay(path: string) -> ReplayResult
-    let entries: map[string, string]
+    let payloads: map[string, string]
     let file_info: io.FileInfo = io.stat(path)
     if !file_info.exists || file_info.is_dir then
-        return ReplayResult(false, entries, "failed to read database log")
+        return ReplayResult(false, payloads, "failed to read database log")
     end
 
     let file: io.File = io.open(path, "r")
     if !file.open then
-        return ReplayResult(false, entries, "failed to read database log")
+        return ReplayResult(false, payloads, "failed to read database log")
     end
 
     let read_result: io.IOResult = io.read(file)
     let close_result: io.IOCloseResult = io.close_result(file)
     if !read_result.ok || !close_result.success || !read_size_matches(read_result.data, file_info.size) then
-        return ReplayResult(false, entries, "failed to read database log")
+        return ReplayResult(false, payloads, "failed to read database log")
     end
 
     let content: string = read_result.data
     if content == "" then
-        return ReplayResult(true, entries, "")
+        return ReplayResult(true, payloads, "")
     end
     if !strings.ends_with(content, "\n") then
-        return ReplayResult(false, entries, "truncated database log")
+        return ReplayResult(false, payloads, "truncated database log")
     end
 
     let lines: strings.SplitResult = strings.split(content, "\n")
@@ -63,30 +63,30 @@ func replay(path: string) -> ReplayResult
         let fields: strings.SplitResult = strings.split(lines.parts[index], "\t")
         if fields.count == 3 && fields.parts[0] == "P" then
             if !is_valid_hex(fields.parts[1]) || !is_valid_hex(fields.parts[2]) then
-                return ReplayResult(false, entries, "invalid database log record")
+                return ReplayResult(false, payloads, "invalid database log record")
             end
             let key: string = decode_hex(fields.parts[1])
-            let value: string = decode_hex(fields.parts[2])
-            entries[key] = value
+            let payload: string = decode_hex(fields.parts[2])
+            payloads[key] = payload
         elif fields.count == 2 && fields.parts[0] == "D" then
             if !is_valid_hex(fields.parts[1]) then
-                return ReplayResult(false, entries, "invalid database log record")
+                return ReplayResult(false, payloads, "invalid database log record")
             end
             let key: string = decode_hex(fields.parts[1])
-            if has_key(entries, key) then
-                delete(entries, key)
+            if has_key(payloads, key) then
+                delete(payloads, key)
             end
         else
-            return ReplayResult(false, entries, "invalid database log record")
+            return ReplayResult(false, payloads, "invalid database log record")
         end
         index = index + 1
     end
 
-    return ReplayResult(true, entries, "")
+    return ReplayResult(true, payloads, "")
 end
 
-func append_put(file: io.File, key: string, value: string) -> io.IOWriteResult
-    let record: string = "P\t" + hex_encode(key) + "\t" + hex_encode(value) + "\n"
+func append_put(file: io.File, key: string, payload: string) -> io.IOWriteResult
+    let record: string = "P\t" + hex_encode(key) + "\t" + hex_encode(payload) + "\n"
     return io.write_result(file, record)
 end
 

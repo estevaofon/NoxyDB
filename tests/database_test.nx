@@ -2,57 +2,72 @@ use io
 use noxydb
 use tests.assertions as assertions
 
-let path: string = "tests/database_test.db"
-if io.exists(path) then
-    io.remove(path)
+func verify_removal_and_close(db: noxydb.Database) -> void
+    let author: map[string, any] = {"name": "Estevao"}
+    let version: map[string, any] = {"number": 2}
+    assertions.assert_true(noxydb.put(db, "author", author).success, "author should store")
+    assertions.assert_true(noxydb.put(db, "version", version).success, "version should store")
+    assertions.assert_true(noxydb.exists(db, "author"), "exists should find author")
+    assertions.assert_true(noxydb.exists(db, "version"), "multiple keys should coexist")
+    noxydb.remove(db, "author")
+    assertions.assert_false(noxydb.exists(db, "author"), "removed key should not exist")
+    assertions.assert_false(noxydb.get(db, "author").found, "removed lookup should be absent")
+    noxydb.remove(db, "missing")
+
+    noxydb.close_database(db)
+    assertions.assert_false(noxydb.is_open(db), "closed database should not be open")
+    assertions.assert_string(noxydb.database_error(db), "", "normal close should have no error")
+    noxydb.close_database(db)
+    assertions.assert_string(noxydb.database_error(db), "", "second close should be a no-op")
+
+    let ignored: map[string, any] = {"ignored": true}
+    let closed_put: noxydb.PutResult = noxydb.put(db, "after-close", ignored)
+    assertions.assert_false(closed_put.success, "put should reject closed database")
+    assertions.assert_string(closed_put.error, "database is not open", "closed put should be classified")
+    assertions.assert_false(noxydb.exists(db, "version"), "exists should reject closed database")
+    assertions.assert_false(noxydb.get(db, "language").found, "get should reject closed database")
 end
 
+let path: string = "tests/database_test.db"
+if io.exists(path) then io.remove(path) end
 let db: noxydb.Database = noxydb.open_database(path)
 assertions.assert_true(noxydb.is_open(db), "new database should be open")
 assertions.assert_string(noxydb.database_error(db), "", "new database should not have an error")
 
-noxydb.put(db, "language", "Noxy")
+let first: map[string, any] = {"name": "Noxy", "version": 2, "active": true}
+let put_result: noxydb.PutResult = noxydb.put(db, "language", first)
+assertions.assert_true(put_result.success, "valid document should store")
+assertions.assert_string(put_result.error, "", "successful put should have no error")
+
 let language: noxydb.LookupResult = noxydb.get(db, "language")
 assertions.assert_true(language.found, "put key should be found")
-assertions.assert_string(language.value, "Noxy", "put value should be returned")
+assertions.assert_true(language.value["name"] == "Noxy", "string field should return")
+assertions.assert_true(language.value["version"] == 2, "integer field should return")
 
-noxydb.put(db, "language", "NoxyDB")
+let replacement: map[string, any] = {"name": "NoxyDB", "nested": {"stable": true}}
+assertions.assert_true(noxydb.put(db, "language", replacement).success, "overwrite should succeed")
 let overwritten: noxydb.LookupResult = noxydb.get(db, "language")
-assertions.assert_true(overwritten.found, "overwritten key should be found")
-assertions.assert_string(overwritten.value, "NoxyDB", "latest value should win")
+assertions.assert_true(overwritten.value["name"] == "NoxyDB", "latest document should win")
+assertions.assert_false(has_key(overwritten.value, "version"), "overwrite should replace the whole document")
+
+let empty_document: map[string, any] = {}
+assertions.assert_true(noxydb.put(db, "", empty_document).success, "empty object should store")
+let empty: noxydb.LookupResult = noxydb.get(db, "")
+assertions.assert_true(empty.found, "empty object should differ from absence")
+assertions.assert_true(length(keys(empty.value)) == 0, "empty object should round-trip")
+
+let invalid: map[string, any] = {"raw": b"abc"}
+let invalid_result: noxydb.PutResult = noxydb.put(db, "invalid", invalid)
+assertions.assert_false(invalid_result.success, "invalid document should fail")
+assertions.assert_string(invalid_result.error, "document is not JSON-compatible", "invalid document error should be explicit")
+assertions.assert_true(noxydb.is_open(db), "invalid input should not fail database")
+assertions.assert_false(noxydb.exists(db, "invalid"), "invalid input should not mutate state")
 
 let missing: noxydb.LookupResult = noxydb.get(db, "missing")
 assertions.assert_false(missing.found, "missing key should not be found")
-assertions.assert_string(missing.value, "", "missing lookup should carry an empty value")
+assertions.assert_true(length(keys(missing.value)) == 0, "missing lookup should carry an empty object")
 
-noxydb.put(db, "", "")
-let empty: noxydb.LookupResult = noxydb.get(db, "")
-assertions.assert_true(empty.found, "empty key with empty value should exist")
-assertions.assert_string(empty.value, "", "empty value should round-trip")
+verify_removal_and_close(db)
 
-noxydb.put(db, "author", "Estevao")
-noxydb.put(db, "version", "1")
-assertions.assert_true(noxydb.exists(db, "author"), "exists should find a stored key")
-assertions.assert_true(noxydb.exists(db, "version"), "multiple keys should coexist")
-
-noxydb.remove(db, "author")
-assertions.assert_false(noxydb.exists(db, "author"), "removed key should not exist")
-assertions.assert_false(noxydb.get(db, "author").found, "removed key lookup should not be found")
-noxydb.remove(db, "missing")
-
-noxydb.close_database(db)
-assertions.assert_false(noxydb.is_open(db), "closed database should not be open")
-assertions.assert_string(noxydb.database_error(db), "", "normal close should not set an error")
-noxydb.close_database(db)
-assertions.assert_string(noxydb.database_error(db), "", "second close should be a no-op")
-
-noxydb.put(db, "after-close", "ignored")
-noxydb.remove(db, "version")
-assertions.assert_false(noxydb.exists(db, "version"), "exists should reject a closed database")
-assertions.assert_false(noxydb.get(db, "language").found, "get should reject a closed database")
-
-if io.exists(path) then
-    io.remove(path)
-end
-
+if io.exists(path) then io.remove(path) end
 print("[PASS] database_test")
