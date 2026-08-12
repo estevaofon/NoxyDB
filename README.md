@@ -131,6 +131,11 @@ O replay é estrito. Uma última linha sem `\n`, uma operação desconhecida,
 quantidade errada de campos ou hexadecimal inválido impede a abertura. A v0.1
 não ignora, repara nem trunca registros inválidos.
 
+Antes do replay, o tamanho lido em bytes deve coincidir com `io.stat().size`.
+Uma leitura curta é tratada como `failed to read database log`, nunca como um
+log completo. Isso pressupõe o modelo single-process da v0.1, sem alteração
+externa concorrente do arquivo.
+
 ## Durabilidade e escopo
 
 A garantia da v0.1 é persistência após `close_database()` completar com
@@ -166,3 +171,8 @@ noxydb/storage.nx  formato, append e replay
 tests/             testes Noxy e runner PowerShell
 docs/              design e plano de implementação
 ```
+
+A Noxy atual não possui visibilidade privada para declarações de módulo.
+Consequentemente, `storage`, seus helpers e os campos de `DatabaseState` são
+acessíveis tecnicamente; eles são internos por convenção. Consumidores devem
+usar somente a API documentada para preservar os invariantes do banco.

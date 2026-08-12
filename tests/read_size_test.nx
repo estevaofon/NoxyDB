@@ -1,0 +1,9 @@
+use noxydb.storage as storage
+use tests.assertions as assertions
+
+assertions.assert_true(storage.read_size_matches("Noxy", 4), "ASCII byte count should match")
+assertions.assert_true(storage.read_size_matches("é", 2), "Unicode byte count should use UTF-8 bytes")
+assertions.assert_false(storage.read_size_matches("é", 1), "short Unicode read should be rejected")
+assertions.assert_false(storage.read_size_matches("partial", 20), "short read should be rejected")
+
+print("[PASS] read_size_test")

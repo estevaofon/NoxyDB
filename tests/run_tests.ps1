@@ -25,7 +25,7 @@ $persistenceTests = @(
     "history_read_test.nx",
     "empty_database_test.nx"
 )
-$errorTests = @("invalid_log_test.nx", "open_failure_test.nx")
+$errorTests = @("invalid_log_test.nx", "open_failure_test.nx", "read_size_test.nx")
 
 $tests = if (-not [string]::IsNullOrWhiteSpace($Test)) {
     @($Test)

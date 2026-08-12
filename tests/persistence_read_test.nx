@@ -22,6 +22,10 @@ let empty: noxydb.LookupResult = noxydb.get(db, "empty")
 assertions.assert_true(empty.found, "empty value should remain distinct from absence")
 assertions.assert_string(empty.value, "", "empty value should survive")
 
+let escaped: noxydb.LookupResult = noxydb.get(db, "chave\tcom\nção")
+assertions.assert_true(escaped.found, "Unicode and control characters should survive in keys")
+assertions.assert_string(escaped.value, "valor\tcom\nUnicode 🐍", "Unicode and control characters should survive in values")
+
 noxydb.close_database(db)
 io.remove(path)
 print("[PASS] persistence_read_test")

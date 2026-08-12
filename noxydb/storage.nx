@@ -27,8 +27,17 @@ func decode_hex(value: string) -> string
     return to_str(hex_decode(value))
 end
 
+func read_size_matches(content: string, expected_size: int) -> bool
+    return length(to_bytes(content)) == expected_size
+end
+
 func replay(path: string) -> ReplayResult
     let entries: map[string, string]
+    let file_info: io.FileInfo = io.stat(path)
+    if !file_info.exists || file_info.is_dir then
+        return ReplayResult(false, entries, "failed to read database log")
+    end
+
     let file: io.File = io.open(path, "r")
     if !file.open then
         return ReplayResult(false, entries, "failed to read database log")
@@ -36,7 +45,7 @@ func replay(path: string) -> ReplayResult
 
     let read_result: io.IOResult = io.read(file)
     let close_result: io.IOCloseResult = io.close_result(file)
-    if !read_result.ok || !close_result.success then
+    if !read_result.ok || !close_result.success || !read_size_matches(read_result.data, file_info.size) then
         return ReplayResult(false, entries, "failed to read database log")
     end
 
