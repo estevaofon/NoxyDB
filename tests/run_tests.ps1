@@ -25,13 +25,16 @@ $persistenceTests = @(
     "history_read_test.nx",
     "empty_database_test.nx"
 )
+$errorTests = @("invalid_log_test.nx", "open_failure_test.nx")
 
 $tests = if (-not [string]::IsNullOrWhiteSpace($Test)) {
     @($Test)
 } elseif ($Group -eq "persistence") {
     $persistenceTests
+} elseif ($Group -eq "errors") {
+    $errorTests
 } elseif ([string]::IsNullOrWhiteSpace($Group)) {
-    $coreTests + $persistenceTests
+    $coreTests + $persistenceTests + $errorTests
 } else {
     throw "Unknown test group: $Group"
 }

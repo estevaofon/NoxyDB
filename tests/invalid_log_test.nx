@@ -1,0 +1,36 @@
+use io
+use noxydb
+use tests.assertions as assertions
+
+func write_fixture(path: string, content: string) -> void
+    if io.exists(path) then
+        io.remove(path)
+    end
+    let file: io.File = io.open(path, "w")
+    io.write(file, content)
+    io.close(file)
+end
+
+func assert_invalid(path: string, content: string, expected_error: string) -> void
+    write_fixture(path, content)
+    let db: noxydb.Database = noxydb.open_database(path)
+    assertions.assert_false(noxydb.is_open(db), "invalid log should not open: " + path)
+    assertions.assert_string(noxydb.database_error(db), expected_error, "invalid log should expose the exact error: " + path)
+    assertions.assert_true(length(keys(db.state.entries)) == 0, "invalid log should expose no partial state: " + path)
+
+    let file: io.File = io.open(path, "r")
+    let result: io.IOResult = io.read(file)
+    io.close(file)
+    assertions.assert_true(result.ok, "invalid fixture should remain readable: " + path)
+    assertions.assert_string(result.data, content, "opening should not alter an invalid log: " + path)
+    io.remove(path)
+end
+
+assert_invalid("tests/truncated.db", "P\t6b\t76", "truncated database log")
+assert_invalid("tests/unknown_operation.db", "P\t676f6f64\t76616c7565\nX\t6b\n", "invalid database log record")
+assert_invalid("tests/wrong_fields.db", "P\t6b\n", "invalid database log record")
+assert_invalid("tests/odd_hex.db", "P\t6\t76\n", "invalid database log record")
+assert_invalid("tests/non_hex.db", "P\tzz\t76\n", "invalid database log record")
+assert_invalid("tests/blank_record.db", "P\t6b\t76\n\n", "invalid database log record")
+
+print("[PASS] invalid_log_test")
