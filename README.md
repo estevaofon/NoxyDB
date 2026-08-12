@@ -7,21 +7,29 @@ append-only log para reconstruir o estado na próxima execução.
 O projeto existe também como teste real da linguagem Noxy, da VM e da
 biblioteca padrão.
 
-## Requisitos
+## Arquitetura
 
-A v0.1 depende das APIs aditivas de I/O observável introduzidas na branch Noxy
-`feature/io-observable-results`, commit `84cd7cb`:
+```mermaid
+flowchart LR
+    App["Aplicação Noxy"] --> API["Database API<br/>open_database · put · get<br/>remove · exists · close_database"]
 
-```noxy
-io.write_result(file, content) -> io.IOWriteResult
-io.close_result(file) -> io.IOCloseResult
+    API -- "GET / EXISTS" --> State["DatabaseState<br/>map[string, string]<br/>open · error · file_fd"]
+
+    API -- "PUT / REMOVE" --> Encode["Storage<br/>codifica registro em hexadecimal"]
+    Encode --> Write["io.write_result<br/>append antes da mutação"]
+    Write -- "sucesso" --> State
+    Write -- "falha" --> Failed["Banco fechado<br/>failed to write database log"]
+
+    Write --> Log[("Append-only log<br/>P key value · D key")]
+
+    Log -- "open_database" --> Read["Leitura integral<br/>validação de tamanho"]
+    Read --> Replay["Replay estrito<br/>valida e aplica em ordem"]
+    Replay --> State
+
+    API -- "close_database" --> Close["io.close_result"]
+    Close -- "sucesso" --> Closed["Banco fechado normalmente"]
+    Close -- "falha" --> CloseFailed["Banco fechado<br/>failed to close database log"]
 ```
-
-As APIs anteriores `io.write()` e `io.close()` continuam compatíveis.
-Como `File` é passado por valor na API do módulo, `close_result()` torna o erro
-de `Close` observável pelo resultado, mas não promete atualizar o campo
-`open` da variável `File` do chamador. O NoxyDB mantém seu próprio estado
-`DatabaseState.open`.
 
 ## Uso
 
