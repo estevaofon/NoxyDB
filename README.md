@@ -1,11 +1,12 @@
 # NoxyDB
 
-NoxyDB v0.1 é um banco key-value local e persistente escrito em Noxy. Ele
-mantém um `map[string, string]` em memória e registra cada alteração em um
-append-only log para reconstruir o estado na próxima execução.
-
-O projeto existe também como teste real da linguagem Noxy, da VM e da
-biblioteca padrão.
+NoxyDB é um banco de dados chave-valor persistente e leve, escrito inteiramente
+em Noxy. Ele implementa um mecanismo de armazenamento baseado em log somente de
+acréscimo, com indexação em memória, reprodução estrita do log e tratamento
+explícito de falhas de entrada e saída. Mais do que um projeto de banco de
+dados, o NoxyDB funciona como uma carga de trabalho real de programação de
+sistemas, criada para exercitar e orientar a evolução da linguagem Noxy, de sua
+máquina virtual e de sua biblioteca padrão.
 
 ## Arquitetura
 
