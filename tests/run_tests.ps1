@@ -15,7 +15,7 @@ if (-not (Test-Path -LiteralPath $noxyExe -PathType Leaf)) {
     throw "Noxy executable not found: $noxyExe"
 }
 
-$coreTests = @("database_test.nx", "write_failure_test.nx", "close_failure_test.nx")
+$coreTests = @("database_test.nx", "write_failure_test.nx", "close_failure_test.nx", "document_codec_test.nx")
 $persistenceTests = @(
     "persistence_write_test.nx",
     "persistence_read_test.nx",

@@ -1,0 +1,30 @@
+use json
+
+struct SerializeResult
+    success: bool
+    payload: string
+    error: string
+end
+
+struct DeserializeResult
+    success: bool
+    value: map[string, any]
+    error: string
+end
+
+func serialize(value: map[string, any]) -> SerializeResult
+    let encoded: json.EncodeResult = json.dumps_result(value)
+    if !encoded.success then
+        return SerializeResult(false, "", "document is not JSON-compatible")
+    end
+    return SerializeResult(true, encoded.data, "")
+end
+
+func deserialize(payload: string) -> DeserializeResult
+    let value: map[string, any] = {}
+    let success: bool = json_loads(payload, value)
+    if !success then
+        return DeserializeResult(false, value, "invalid document payload")
+    end
+    return DeserializeResult(true, value, "")
+end

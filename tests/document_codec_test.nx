@@ -1,0 +1,63 @@
+use noxydb.document as document
+use tests.assertions as assertions
+
+let profile: map[string, any] = {"city": "Cuiabá"}
+let first_item: map[string, any] = {"id": 1, "label": "first"}
+let second_item: map[string, any] = {"id": 2, "label": "second"}
+let items: any[] = [first_item, second_item]
+let original: map[string, any] = {
+    "name": "Estevão",
+    "empty": "",
+    "age": 30,
+    "score": 98.5,
+    "active": true,
+    "disabled": false,
+    "nothing": null,
+    "languages": ["Python", "Noxy"],
+    "profile": profile,
+    "items": items,
+    "empty_object": {},
+    "empty_array": []
+}
+
+let encoded: document.SerializeResult = document.serialize(original)
+assertions.assert_true(encoded.success, "JSON document should serialize")
+assertions.assert_true(encoded.payload != "", "serialized payload should not be empty")
+assertions.assert_string(encoded.error, "", "successful serialization should have no error")
+
+let decoded: document.DeserializeResult = document.deserialize(encoded.payload)
+assertions.assert_true(decoded.success, "serialized document should deserialize")
+let name: string = decoded.value["name"]
+let age: int = decoded.value["age"]
+let score: float = decoded.value["score"]
+let restored_profile: map[string, any] = decoded.value["profile"]
+let restored_items: any[] = decoded.value["items"]
+let restored_first: map[string, any] = restored_items[0]
+assertions.assert_string(name, "Estevão", "Unicode should round-trip")
+assertions.assert_int(age, 30, "integer should round-trip")
+assertions.assert_float(score, 98.5, "float should round-trip")
+assertions.assert_true(decoded.value["active"] == true, "true should round-trip")
+assertions.assert_true(decoded.value["disabled"] == false, "false should round-trip")
+assertions.assert_true(decoded.value["nothing"] == null, "null should round-trip")
+assertions.assert_true(length(decoded.value["empty_object"]) == 0, "empty object should round-trip")
+assertions.assert_true(length(decoded.value["empty_array"]) == 0, "empty array should round-trip")
+assertions.assert_true(restored_profile["city"] == "Cuiabá", "nested object should round-trip")
+assertions.assert_true(restored_first["id"] == 1, "array of objects should round-trip")
+
+let invalid_value: map[string, any] = {"raw": b"abc"}
+let invalid_encoded: document.SerializeResult = document.serialize(invalid_value)
+assertions.assert_false(invalid_encoded.success, "bytes should be rejected")
+assertions.assert_string(invalid_encoded.payload, "", "failed serialization should have no payload")
+assertions.assert_string(invalid_encoded.error, "document is not JSON-compatible", "encode error should be stable")
+
+let malformed: document.DeserializeResult = document.deserialize("{")
+let scalar: document.DeserializeResult = document.deserialize("42")
+let array_root: document.DeserializeResult = document.deserialize("[]")
+let null_root: document.DeserializeResult = document.deserialize("null")
+assertions.assert_false(malformed.success, "malformed JSON should fail")
+assertions.assert_false(scalar.success, "scalar root should fail")
+assertions.assert_false(array_root.success, "array root should fail")
+assertions.assert_false(null_root.success, "null root should fail")
+assertions.assert_string(malformed.error, "invalid document payload", "decode error should be stable")
+
+print("[PASS] document_codec_test")

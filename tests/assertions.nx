@@ -22,3 +22,15 @@ func assert_string(actual: string, expected: string, message: string) -> void
         fail(message + " - expected '" + expected + "', got '" + actual + "'")
     end
 end
+
+func assert_int(actual: int, expected: int, message: string) -> void
+    if actual != expected then
+        fail(message + " - expected " + to_str(expected) + ", got " + to_str(actual))
+    end
+end
+
+func assert_float(actual: float, expected: float, message: string) -> void
+    if actual != expected then
+        fail(message + " - expected " + to_str(expected) + ", got " + to_str(actual))
+    end
+end
