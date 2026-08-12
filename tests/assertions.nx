@@ -1,0 +1,24 @@
+use sys
+
+func fail(message: string) -> void
+    print("[FAIL] " + message)
+    sys.exit(1)
+end
+
+func assert_true(condition: bool, message: string) -> void
+    if !condition then
+        fail(message)
+    end
+end
+
+func assert_false(condition: bool, message: string) -> void
+    if condition then
+        fail(message)
+    end
+end
+
+func assert_string(actual: string, expected: string, message: string) -> void
+    if actual != expected then
+        fail(message + " - expected '" + expected + "', got '" + actual + "'")
+    end
+end

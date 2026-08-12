@@ -1,0 +1,111 @@
+use io
+use noxydb.storage as storage
+
+struct LookupResult
+    found: bool
+    value: string
+end
+
+struct DatabaseState
+    entries: map[string, string]
+    file_fd: int
+    path: string
+    open: bool
+    error: string
+end
+
+struct Database
+    state: DatabaseState
+end
+
+func failed_database(path: string, error: string) -> Database
+    let entries: map[string, string]
+    let state: DatabaseState = DatabaseState(entries, 0, path, false, error)
+    return Database(state)
+end
+
+func open_database(path: string) -> Database
+    let file: io.File = io.open(path, "a")
+    if !file.open then
+        return failed_database(path, "failed to open database log for append")
+    end
+
+    let entries: map[string, string]
+    let state: DatabaseState = DatabaseState(entries, file.fd, path, true, "")
+    return Database(state)
+end
+
+func database_file(db: Database) -> io.File
+    return io.File(db.state.file_fd, db.state.path, "a", db.state.open)
+end
+
+func fail_write(db: Database) -> void
+    io.close_result(database_file(db))
+    db.state.open = false
+    db.state.error = "failed to write database log"
+end
+
+func put(db: Database, key: string, value: string) -> void
+    if !db.state.open then
+        return
+    end
+
+    let result: io.IOWriteResult = storage.append_put(database_file(db), key, value)
+    if !result.success then
+        fail_write(db)
+        return
+    end
+
+    db.state.entries[key] = value
+end
+
+func get(db: Database, key: string) -> LookupResult
+    if !db.state.open then
+        return LookupResult(false, "")
+    end
+    if !has_key(db.state.entries, key) then
+        return LookupResult(false, "")
+    end
+    return LookupResult(true, db.state.entries[key])
+end
+
+func remove(db: Database, key: string) -> void
+    if !db.state.open || !has_key(db.state.entries, key) then
+        return
+    end
+
+    let result: io.IOWriteResult = storage.append_remove(database_file(db), key)
+    if !result.success then
+        fail_write(db)
+        return
+    end
+
+    delete(db.state.entries, key)
+end
+
+func exists(db: Database, key: string) -> bool
+    if !db.state.open then
+        return false
+    end
+    return has_key(db.state.entries, key)
+end
+
+func close_database(db: Database) -> void
+    if !db.state.open then
+        return
+    end
+
+    let result: io.IOCloseResult = io.close_result(database_file(db))
+    db.state.open = false
+    if !result.success then
+        db.state.error = "failed to close database log"
+    end
+end
+
+func is_open(db: Database) -> bool
+    return db.state.open
+end
+
+func database_error(db: Database) -> string
+    return db.state.error
+end

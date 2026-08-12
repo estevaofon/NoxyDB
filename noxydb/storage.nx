@@ -1,0 +1,11 @@
+use io
+
+func append_put(file: io.File, key: string, value: string) -> io.IOWriteResult
+    let record: string = "P\t" + hex_encode(key) + "\t" + hex_encode(value) + "\n"
+    return io.write_result(file, record)
+end
+
+func append_remove(file: io.File, key: string) -> io.IOWriteResult
+    let record: string = "D\t" + hex_encode(key) + "\n"
+    return io.write_result(file, record)
+end

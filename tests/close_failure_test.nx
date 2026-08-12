@@ -1,0 +1,28 @@
+use io
+use noxydb
+use tests.assertions as assertions
+
+let path: string = "tests/close_failure.db"
+if io.exists(path) then
+    io.remove(path)
+end
+
+let db: noxydb.Database = noxydb.open_database(path)
+noxydb.put(db, "stable", "value")
+
+let file: io.File = io.File(db.state.file_fd, db.state.path, "a", true)
+io.close(file)
+noxydb.close_database(db)
+
+assertions.assert_false(noxydb.is_open(db), "failed close should leave the database closed")
+assertions.assert_string(noxydb.database_error(db), "failed to close database log", "failed close should be observable")
+noxydb.close_database(db)
+assertions.assert_string(noxydb.database_error(db), "failed to close database log", "second close should preserve the failure")
+noxydb.put(db, "later", "ignored")
+assertions.assert_false(has_key(db.state.entries, "later"), "failed close should reject later writes")
+
+if io.exists(path) then
+    io.remove(path)
+end
+
+print("[PASS] close_failure_test")

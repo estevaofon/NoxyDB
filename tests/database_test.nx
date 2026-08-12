@@ -1,0 +1,58 @@
+use io
+use noxydb
+use tests.assertions as assertions
+
+let path: string = "tests/database_test.db"
+if io.exists(path) then
+    io.remove(path)
+end
+
+let db: noxydb.Database = noxydb.open_database(path)
+assertions.assert_true(noxydb.is_open(db), "new database should be open")
+assertions.assert_string(noxydb.database_error(db), "", "new database should not have an error")
+
+noxydb.put(db, "language", "Noxy")
+let language: noxydb.LookupResult = noxydb.get(db, "language")
+assertions.assert_true(language.found, "put key should be found")
+assertions.assert_string(language.value, "Noxy", "put value should be returned")
+
+noxydb.put(db, "language", "NoxyDB")
+let overwritten: noxydb.LookupResult = noxydb.get(db, "language")
+assertions.assert_true(overwritten.found, "overwritten key should be found")
+assertions.assert_string(overwritten.value, "NoxyDB", "latest value should win")
+
+let missing: noxydb.LookupResult = noxydb.get(db, "missing")
+assertions.assert_false(missing.found, "missing key should not be found")
+assertions.assert_string(missing.value, "", "missing lookup should carry an empty value")
+
+noxydb.put(db, "", "")
+let empty: noxydb.LookupResult = noxydb.get(db, "")
+assertions.assert_true(empty.found, "empty key with empty value should exist")
+assertions.assert_string(empty.value, "", "empty value should round-trip")
+
+noxydb.put(db, "author", "Estevao")
+noxydb.put(db, "version", "1")
+assertions.assert_true(noxydb.exists(db, "author"), "exists should find a stored key")
+assertions.assert_true(noxydb.exists(db, "version"), "multiple keys should coexist")
+
+noxydb.remove(db, "author")
+assertions.assert_false(noxydb.exists(db, "author"), "removed key should not exist")
+assertions.assert_false(noxydb.get(db, "author").found, "removed key lookup should not be found")
+noxydb.remove(db, "missing")
+
+noxydb.close_database(db)
+assertions.assert_false(noxydb.is_open(db), "closed database should not be open")
+assertions.assert_string(noxydb.database_error(db), "", "normal close should not set an error")
+noxydb.close_database(db)
+assertions.assert_string(noxydb.database_error(db), "", "second close should be a no-op")
+
+noxydb.put(db, "after-close", "ignored")
+noxydb.remove(db, "version")
+assertions.assert_false(noxydb.exists(db, "version"), "exists should reject a closed database")
+assertions.assert_false(noxydb.get(db, "language").found, "get should reject a closed database")
+
+if io.exists(path) then
+    io.remove(path)
+end
+
+print("[PASS] database_test")

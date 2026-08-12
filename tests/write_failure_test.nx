@@ -1,0 +1,50 @@
+use io
+use noxydb
+use tests.assertions as assertions
+
+func close_underlying_file(db: noxydb.Database) -> void
+    let file: io.File = io.File(db.state.file_fd, db.state.path, "a", true)
+    io.close(file)
+end
+
+let put_path: string = "tests/write_failure_put.db"
+if io.exists(put_path) then
+    io.remove(put_path)
+end
+
+let put_db: noxydb.Database = noxydb.open_database(put_path)
+noxydb.put(put_db, "version", "1")
+close_underlying_file(put_db)
+noxydb.put(put_db, "version", "2")
+
+assertions.assert_false(noxydb.is_open(put_db), "failed put should close the database")
+assertions.assert_string(noxydb.database_error(put_db), "failed to write database log", "failed put should expose the write error")
+assertions.assert_string(put_db.state.entries["version"], "1", "failed put should not change the map")
+noxydb.put(put_db, "later", "ignored")
+assertions.assert_false(has_key(put_db.state.entries, "later"), "operations after failed put should be rejected")
+
+let remove_path: string = "tests/write_failure_remove.db"
+if io.exists(remove_path) then
+    io.remove(remove_path)
+end
+
+let remove_db: noxydb.Database = noxydb.open_database(remove_path)
+noxydb.put(remove_db, "author", "Estevao")
+close_underlying_file(remove_db)
+noxydb.remove(remove_db, "author")
+
+assertions.assert_false(noxydb.is_open(remove_db), "failed remove should close the database")
+assertions.assert_string(noxydb.database_error(remove_db), "failed to write database log", "failed remove should expose the write error")
+assertions.assert_true(has_key(remove_db.state.entries, "author"), "failed remove should not change the map")
+assertions.assert_string(remove_db.state.entries["author"], "Estevao", "failed remove should preserve the value")
+noxydb.remove(remove_db, "author")
+assertions.assert_true(has_key(remove_db.state.entries, "author"), "operations after failed remove should be rejected")
+
+if io.exists(put_path) then
+    io.remove(put_path)
+end
+if io.exists(remove_path) then
+    io.remove(remove_path)
+end
+
+print("[PASS] write_failure_test")
