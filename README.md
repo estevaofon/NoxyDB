@@ -1,12 +1,14 @@
 # NoxyDB
 
 NoxyDB é um banco de dados chave-valor persistente e leve, escrito inteiramente
-em Noxy. Ele implementa um mecanismo de armazenamento baseado em log somente de
-acréscimo, com indexação em memória, reprodução estrita do log e tratamento
-explícito de falhas de entrada e saída. Mais do que um projeto de banco de
-dados, o NoxyDB funciona como uma carga de trabalho real de programação de
-sistemas, criada para exercitar e orientar a evolução da linguagem Noxy, de sua
-máquina virtual e de sua biblioteca padrão.
+em Noxy. Cada chave `string` identifica um documento JSON, que pode conter
+strings, números, booleanos, valores nulos, arrays e objetos aninhados. Os
+documentos são armazenados em um log somente de acréscimo e recuperados,
+substituídos ou removidos por sua chave.
+
+Mais do que um projeto de banco de dados, o NoxyDB funciona como uma carga de
+trabalho real de programação de sistemas, criada para exercitar e orientar a
+evolução da linguagem Noxy, de sua máquina virtual e de sua biblioteca padrão.
 
 ## Arquitetura
 
