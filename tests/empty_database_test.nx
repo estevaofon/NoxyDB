@@ -1,0 +1,19 @@
+use io
+use noxydb
+use tests.assertions as assertions
+
+let path: string = "tests/empty.db"
+if io.exists(path) then
+    io.remove(path)
+end
+
+let created: noxydb.Database = noxydb.open_database(path)
+assertions.assert_true(noxydb.is_open(created), "empty database should be created")
+noxydb.close_database(created)
+
+let reopened: noxydb.Database = noxydb.open_database(path)
+assertions.assert_true(noxydb.is_open(reopened), "empty database should reopen")
+assertions.assert_false(noxydb.get(reopened, "missing").found, "empty database should contain no keys")
+noxydb.close_database(reopened)
+io.remove(path)
+print("[PASS] empty_database_test")

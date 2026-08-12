@@ -1,0 +1,19 @@
+use io
+use noxydb
+use tests.assertions as assertions
+
+let path: string = "tests/persistence.db"
+if io.exists(path) then
+    io.remove(path)
+end
+
+let db: noxydb.Database = noxydb.open_database(path)
+assertions.assert_true(noxydb.is_open(db), "persistence writer should open the database")
+noxydb.put(db, "language", "Noxy")
+noxydb.put(db, "version", "1")
+noxydb.put(db, "version", "2")
+noxydb.put(db, "author", "Estevao")
+noxydb.put(db, "empty", "")
+noxydb.close_database(db)
+assertions.assert_string(noxydb.database_error(db), "", "persistence writer should close normally")
+print("[PASS] persistence_write_test")

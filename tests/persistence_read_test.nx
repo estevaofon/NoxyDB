@@ -1,0 +1,27 @@
+use io
+use noxydb
+use tests.assertions as assertions
+
+let path: string = "tests/persistence.db"
+let db: noxydb.Database = noxydb.open_database(path)
+assertions.assert_true(noxydb.is_open(db), "persistence reader should open the database")
+
+let language: noxydb.LookupResult = noxydb.get(db, "language")
+assertions.assert_true(language.found, "language should survive a new process")
+assertions.assert_string(language.value, "Noxy", "language should retain its value")
+
+let version: noxydb.LookupResult = noxydb.get(db, "version")
+assertions.assert_true(version.found, "version should survive a new process")
+assertions.assert_string(version.value, "2", "latest overwritten version should survive")
+
+let author: noxydb.LookupResult = noxydb.get(db, "author")
+assertions.assert_true(author.found, "multiple keys should survive")
+assertions.assert_string(author.value, "Estevao", "author should retain its value")
+
+let empty: noxydb.LookupResult = noxydb.get(db, "empty")
+assertions.assert_true(empty.found, "empty value should remain distinct from absence")
+assertions.assert_string(empty.value, "", "empty value should survive")
+
+noxydb.close_database(db)
+io.remove(path)
+print("[PASS] persistence_read_test")

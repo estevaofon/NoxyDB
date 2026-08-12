@@ -1,0 +1,14 @@
+use io
+use noxydb
+
+let path: string = "tests/deleted.db"
+if io.exists(path) then
+    io.remove(path)
+end
+
+let db: noxydb.Database = noxydb.open_database(path)
+noxydb.put(db, "language", "Noxy")
+noxydb.put(db, "author", "Estevao")
+noxydb.remove(db, "author")
+noxydb.close_database(db)
+print("[PASS] deleted_write_test")

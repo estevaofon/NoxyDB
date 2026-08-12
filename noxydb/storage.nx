@@ -1,4 +1,80 @@
 use io
+use strings
+
+struct ReplayResult
+    success: bool
+    entries: map[string, string]
+    error: string
+end
+
+func is_valid_hex(value: string) -> bool
+    if length(value) % 2 != 0 then
+        return false
+    end
+
+    let index: int = 0
+    while index < length(value) do
+        let character: string = strings.char_at(value, index)
+        if !strings.contains("0123456789abcdefABCDEF", character) then
+            return false
+        end
+        index = index + 1
+    end
+    return true
+end
+
+func decode_hex(value: string) -> string
+    return to_str(hex_decode(value))
+end
+
+func replay(path: string) -> ReplayResult
+    let entries: map[string, string]
+    let file: io.File = io.open(path, "r")
+    if !file.open then
+        return ReplayResult(false, entries, "failed to read database log")
+    end
+
+    let read_result: io.IOResult = io.read(file)
+    let close_result: io.IOCloseResult = io.close_result(file)
+    if !read_result.ok || !close_result.success then
+        return ReplayResult(false, entries, "failed to read database log")
+    end
+
+    let content: string = read_result.data
+    if content == "" then
+        return ReplayResult(true, entries, "")
+    end
+    if !strings.ends_with(content, "\n") then
+        return ReplayResult(false, entries, "truncated database log")
+    end
+
+    let lines: strings.SplitResult = strings.split(content, "\n")
+    let index: int = 0
+    while index < lines.count - 1 do
+        let fields: strings.SplitResult = strings.split(lines.parts[index], "\t")
+        if fields.count == 3 && fields.parts[0] == "P" then
+            if !is_valid_hex(fields.parts[1]) || !is_valid_hex(fields.parts[2]) then
+                return ReplayResult(false, entries, "invalid database log record")
+            end
+            let key: string = decode_hex(fields.parts[1])
+            let value: string = decode_hex(fields.parts[2])
+            entries[key] = value
+        elif fields.count == 2 && fields.parts[0] == "D" then
+            if !is_valid_hex(fields.parts[1]) then
+                return ReplayResult(false, entries, "invalid database log record")
+            end
+            let key: string = decode_hex(fields.parts[1])
+            if has_key(entries, key) then
+                delete(entries, key)
+            end
+        else
+            return ReplayResult(false, entries, "invalid database log record")
+        end
+        index = index + 1
+    end
+
+    return ReplayResult(true, entries, "")
+end
 
 func append_put(file: io.File, key: string, value: string) -> io.IOWriteResult
     let record: string = "P\t" + hex_encode(key) + "\t" + hex_encode(value) + "\n"

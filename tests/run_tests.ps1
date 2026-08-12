@@ -1,5 +1,6 @@
 param(
-    [string]$Test = ""
+    [string]$Test = "",
+    [string]$Group = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -14,10 +15,25 @@ if (-not (Test-Path -LiteralPath $noxyExe -PathType Leaf)) {
     throw "Noxy executable not found: $noxyExe"
 }
 
-$tests = if ([string]::IsNullOrWhiteSpace($Test)) {
-    @("database_test.nx", "write_failure_test.nx", "close_failure_test.nx")
-} else {
+$coreTests = @("database_test.nx", "write_failure_test.nx", "close_failure_test.nx")
+$persistenceTests = @(
+    "persistence_write_test.nx",
+    "persistence_read_test.nx",
+    "deleted_write_test.nx",
+    "deleted_read_test.nx",
+    "history_write_test.nx",
+    "history_read_test.nx",
+    "empty_database_test.nx"
+)
+
+$tests = if (-not [string]::IsNullOrWhiteSpace($Test)) {
     @($Test)
+} elseif ($Group -eq "persistence") {
+    $persistenceTests
+} elseif ([string]::IsNullOrWhiteSpace($Group)) {
+    $coreTests + $persistenceTests
+} else {
+    throw "Unknown test group: $Group"
 }
 
 Push-Location $projectRoot
