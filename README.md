@@ -38,150 +38,76 @@ flowchart LR
 use noxydb
 
 let db: noxydb.Database = noxydb.open_database("database.db")
-if !noxydb.is_open(db) then
-    print(noxydb.database_error(db))
-else
-    noxydb.put(db, "language", "Noxy")
-    noxydb.put(db, "author", "Estevao")
+let profile: map[string, any] = {"city": "Cuiabá"}
+let user: map[string, any] = {
+    "name": "Estevao",
+    "age": 30,
+    "active": true,
+    "languages": ["Python", "Noxy"],
+    "profile": profile
+}
 
-    let result: noxydb.LookupResult = noxydb.get(db, "language")
+let stored: noxydb.PutResult = noxydb.put(db, "user:1", user)
+if stored.success then
+    let result: noxydb.LookupResult = noxydb.get(db, "user:1")
     if result.found then
-        print(result.value)
+        print(result.value["name"])
     end
-
-    noxydb.remove(db, "author")
-    noxydb.close_database(db)
-end
-```
-
-Em outro processo:
-
-```noxy
-use noxydb
-
-let db: noxydb.Database = noxydb.open_database("database.db")
-let result: noxydb.LookupResult = noxydb.get(db, "language")
-if result.found then
-    print(result.value) // Noxy
+else
+    print(stored.error)
 end
 noxydb.close_database(db)
 ```
 
 ## API
 
-```noxy
-open_database(path: string) -> Database
-put(db: Database, key: string, value: string) -> void
-get(db: Database, key: string) -> LookupResult
-remove(db: Database, key: string) -> void
-exists(db: Database, key: string) -> bool
-close_database(db: Database) -> void
-is_open(db: Database) -> bool
-database_error(db: Database) -> string
-```
+NoxyDB v0.2 maps string keys to JSON objects represented as
+map[string, any]. Scalars, arrays, and null are valid inside a document but not
+at its root.
 
-`LookupResult` distingue ausência de valor vazio:
+LookupResult contains found: bool and value: map[string, any]. PutResult
+contains success: bool and error: string. An existing empty object returns
+found == true; an absent key returns found == false.
 
-```noxy
-struct LookupResult
-    found: bool
-    value: string
-end
-```
+put() replaces the complete document. It returns document is not
+JSON-compatible for invalid caller values without failing the database. An I/O
+append failure returns failed to write database log and transitions the
+database to failed.
 
-- chave existente com valor vazio: `LookupResult(true, "")`;
-- chave inexistente: `LookupResult(false, "")`.
+## JSON domain
 
-Chaves vazias também são válidas. `exists()` é uma conveniência; `get()` já
-retorna existência e valor em uma única chamada.
+Documents may contain null, bool, signed 64-bit int, finite 64-bit float,
+string, arrays, and recursively string-keyed maps. Bytes, structs, references,
+callables, channels, wait groups, non-string map keys, NaN, infinities, and
+cycles are rejected.
 
-## Estados e erros
+## State and isolation
 
-O banco possui três estados observáveis:
+The authoritative in-memory state is map[string, string] containing serialized
+JSON. get() deserializes a fresh map on every successful lookup. Mutating the
+input after put(), or mutating a returned document, cannot change database
+state or persistence.
 
-- `is_open(db) == true` e erro vazio: aberto;
-- fechado e erro vazio: fechado normalmente;
-- fechado e erro não vazio: falhou e rejeita operações posteriores.
+## Physical format and replay
 
-Erros possíveis na v0.1:
+P<TAB><key_hex><TAB><payload_hex>\n
+D<TAB><key_hex>\n
 
-```text
-failed to read database log
-truncated database log
-invalid database log record
-failed to open database log for append
-failed to write database log
-failed to close database log
-```
+storage.nx treats payloads as opaque strings. Replay strictly validates record
+termination, arity, operations, hexadecimal data, and read byte count. The API
+then validates every replayed payload as a JSON object before opening the file
+for append.
 
-Uma falha de escrita não altera o map. Ela fecha logicamente o banco e impede
-novas operações. `close_database()` é idempotente.
+There is no header, migration, fallback, version discriminator, or v0.1
+compatibility logic.
 
-## Formato do log
+## Lifecycle and durability
 
-Cada registro textual termina obrigatoriamente em `\n`. Chaves e valores UTF-8
-são codificados em hexadecimal:
+The observable states remain open, normally closed, and failed. Writes reach
+the append-only log before the raw in-memory map changes. Write and close
+failures are explicit. Persistence is guaranteed after close_database()
+completes successfully; crash durability and fsync are not provided.
 
-```text
-P<TAB><chave em hex><TAB><valor em hex>\n
-D<TAB><chave em hex>\n
-```
-
-Exemplo:
-
-```text
-P	6c616e6775616765	4e6f7879
-P	76657273696f6e	31
-P	76657273696f6e	32
-D	617574686f72
-```
-
-O replay é estrito. Uma última linha sem `\n`, uma operação desconhecida,
-quantidade errada de campos ou hexadecimal inválido impede a abertura. A v0.1
-não ignora, repara nem trunca registros inválidos.
-
-Antes do replay, o tamanho lido em bytes deve coincidir com `io.stat().size`.
-Uma leitura curta é tratada como `failed to read database log`, nunca como um
-log completo. Isso pressupõe o modelo single-process da v0.1, sem alteração
-externa concorrente do arquivo.
-
-## Durabilidade e escopo
-
-A garantia da v0.1 é persistência após `close_database()` completar com
-sucesso. A versão não executa `fsync` e não promete crash durability.
-
-Também ficam fora da v0.1: servidor, múltiplos processos simultâneos,
-concorrência, transações, replicação, sharding, índices, TTL, autenticação,
-compaction, checksums e valores estruturados.
-
-## Testes
-
-No PowerShell, aponte o runner para um executável Noxy que contenha as APIs de
-I/O observável:
-
-```powershell
-$env:NOXY_EXE = "D:\caminho\para\noxy.exe"
-./tests/run_tests.ps1
-```
-
-`NOXY_EXE` é obrigatório. O runner não usa automaticamente outro checkout da
-Noxy, evitando testar por engano um executável sem a evolução de I/O requerida.
-
-Cada writer/reader de persistência roda em um processo Noxy separado. A suíte
-cobre API em memória, sobrescritas, valor vazio, múltiplas chaves, tombstones,
-históricos repetidos, banco vazio, falhas reais de escrita/fechamento e logs
-inválidos.
-
-## Estrutura
-
-```text
-noxydb/noxydb.nx   API e estado do banco
-noxydb/storage.nx  formato, append e replay
-tests/             testes Noxy e runner PowerShell
-docs/              design e plano de implementação
-```
-
-A Noxy atual não possui visibilidade privada para declarações de módulo.
-Consequentemente, `storage`, seus helpers e os campos de `DatabaseState` são
-acessíveis tecnicamente; eles são internos por convenção. Consumidores devem
-usar somente a API documentada para preservar os invariantes do banco.
+Queries, JSON Path, partial updates, indexes, schemas, collections, filters,
+compaction, TTL, networking, concurrency, transactions, replication, and
+sharding remain out of scope.
