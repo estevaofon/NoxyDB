@@ -1,48 +1,47 @@
 # NoxyDB
 
-NoxyDB é um banco de dados chave-valor persistente e leve, escrito inteiramente
-em Noxy. Cada chave `string` identifica um documento JSON, que pode conter
-strings, números, booleanos, valores nulos, arrays e objetos aninhados. Os
-documentos são armazenados em um log somente de acréscimo e recuperados,
-substituídos ou removidos por sua chave.
+NoxyDB is a lightweight, persistent key-value database written entirely in
+Noxy. Each `string` key identifies a JSON document that may contain strings,
+numbers, booleans, null values, arrays, and nested objects. Documents are stored
+in an append-only log and retrieved, replaced, or removed by key.
 
-Mais do que um projeto de banco de dados, o NoxyDB funciona como uma carga de
-trabalho real de programação de sistemas, criada para exercitar e orientar a
-evolução da linguagem Noxy, de sua máquina virtual e de sua biblioteca padrão.
+Beyond being a database project, NoxyDB serves as a real-world systems
+programming workload designed to exercise and guide the evolution of the Noxy
+language, its virtual machine, and its standard library.
 
-## Arquitetura
+## Architecture
 
 ```mermaid
 flowchart LR
-    App["Aplicação Noxy"] --> API["Database API<br/>open_database · put · get<br/>remove · exists · close_database"]
+    App["Noxy application"] --> API["Database API<br/>open_database · put · get<br/>remove · exists · close_database"]
 
     API -- "PUT: map[string, any]" --> Serialize["document.nx<br/>serialize"]
-    Serialize -- "JSON estrito" --> Encode["storage.nx<br/>payload opaco · registro hexadecimal"]
+    Serialize -- "strict JSON" --> Encode["storage.nx<br/>opaque payload · hexadecimal record"]
     API -- "REMOVE" --> Encode
-    Encode --> Write["io.write_result<br/>append antes da mutação"]
-    Write -- "sucesso" --> State["DatabaseState bruto<br/>map[string, string]<br/>open · error · file_fd"]
-    Write -- "falha" --> Failed["Banco fechado<br/>failed to write database log"]
+    Encode --> Write["io.write_result<br/>append before mutation"]
+    Write -- "success" --> State["Raw DatabaseState<br/>map[string, string]<br/>open · error · file_fd"]
+    Write -- "failure" --> Failed["Database closed<br/>failed to write database log"]
 
-    API -- "GET: lê payload" --> State
-    State -- "JSON serializado" --> Deserialize["document.nx<br/>deserialize"]
-    Deserialize -- "novo map[string, any]" --> API
+    API -- "GET: reads payload" --> State
+    State -- "serialized JSON" --> Deserialize["document.nx<br/>deserialize"]
+    Deserialize -- "fresh map[string, any]" --> API
     API -- "EXISTS" --> State
 
     Write --> Log[("Append-only log<br/>P key value · D key")]
 
-    Log -- "open_database" --> Read["Leitura integral<br/>validação de tamanho"]
-    Read --> Replay["Replay estrito<br/>valida e aplica em ordem"]
-    Replay --> Validate["document.deserialize<br/>validação final de todos os payloads"]
-    Validate -- "todos válidos" --> AppendOpen["Abre o log para append"]
+    Log -- "open_database" --> Read["Full read<br/>byte-count validation"]
+    Read --> Replay["Strict replay<br/>validates and applies in order"]
+    Replay --> Validate["document.deserialize<br/>final validation of every payload"]
+    Validate -- "all valid" --> AppendOpen["Opens the log for append"]
     AppendOpen --> State
-    Validate -- "inválido" --> Invalid["Banco fechado<br/>invalid document payload<br/>estado bruto vazio"]
+    Validate -- "invalid" --> Invalid["Database closed<br/>invalid document payload<br/>empty raw state"]
 
     API -- "close_database" --> Close["io.close_result"]
-    Close -- "sucesso" --> Closed["Banco fechado normalmente"]
-    Close -- "falha" --> CloseFailed["Banco fechado<br/>failed to close database log"]
+    Close -- "success" --> Closed["Database closed normally"]
+    Close -- "failure" --> CloseFailed["Database closed<br/>failed to close database log"]
 ```
 
-## Uso
+## Usage
 
 ```noxy
 use noxydb
@@ -69,31 +68,31 @@ end
 noxydb.close_database(db)
 ```
 
-## Exemplo executável
+## Executable example
 
-O walkthrough completo em `examples/documents.nx` demonstra documentos
-aninhados, leitura, substituição completa, remoção e replay:
+The complete walkthrough in `examples/documents.nx` demonstrates nested
+documents, reads, full replacement, removal, and replay:
 
 ```powershell
-$env:NOXY_EXE = "D:\caminho\para\noxy.exe"
+$env:NOXY_EXE = "D:\path\to\noxy.exe"
 & $env:NOXY_EXE examples/documents.nx
 ```
 
-O exemplo recria `examples/noxydb_v02.db` a cada execução e mantém o arquivo ao
-final para inspeção. Bancos gerados dentro de `examples/` são ignorados pelo
-Git.
+The example recreates `examples/noxydb_v02.db` on every run and keeps the file
+available for inspection afterward. Databases generated inside `examples/`
+are ignored by Git.
 
-### Cadastro interativo de usuários
+### Interactive user registry
 
-`examples/cadastro_usuarios.nx` porta o cadastro SQLite original para NoxyDB.
-Cada usuário ocupa uma chave própria, enquanto `usuarios:meta` mantém o próximo
-ID e o índice usado pela listagem:
+`examples/cadastro_usuarios.nx` ports the original SQLite user registry to
+NoxyDB. Each user has a dedicated key, while `usuarios:meta` stores the next ID
+and the index used for listing:
 
 ```powershell
 & $env:NOXY_EXE examples/cadastro_usuarios.nx
 ```
 
-O banco fica em `examples/usuarios.db` e é ignorado pelo Git.
+The database is stored at `examples/usuarios.db` and is ignored by Git.
 
 ## API
 
