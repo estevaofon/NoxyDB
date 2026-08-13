@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import os
 from typing import Any
 
-from noxydb import Database, NoxyDBError, PutResult
+from noxydb import Database, NoxyDBClient, NoxyDBError, PutResult
 
 
 def fail(db: Database, message: str) -> None:
@@ -145,3 +146,52 @@ def update_user(db: Database) -> None:
         fail(db, operation + ": " + str(error))
     require_put(db, result, operation)
     print("Usuário atualizado.")
+
+
+def main() -> int:
+    client = NoxyDBClient()
+    try:
+        db = client.open_database("usuarios")
+    except NoxyDBError as error:
+        print("Erro ao abrir banco: " + str(error))
+        return 1
+
+    load_metadata(db)
+
+    running = True
+    while running:
+        os.system("cls")
+        print("")
+        print("Sistema de Gerenciamento de Usuários")
+        print("====================================")
+        print("1. Adicionar Usuário")
+        print("2. Listar Usuários")
+        print("3. Remover Usuário")
+        print("4. Atualizar Usuário")
+        print("5. Sair")
+        option = input("Digite a opção desejada: ")
+
+        if option == "1":
+            add_user(db)
+        if option == "2":
+            list_users(db)
+        if option == "3":
+            remove_user(db)
+        if option == "4":
+            update_user(db)
+        if option == "5":
+            running = False
+        if option not in ("1", "2", "3", "4", "5"):
+            print("Opção inválida.")
+
+    try:
+        db.close()
+    except NoxyDBError as error:
+        print("Erro ao fechar banco: " + str(error))
+        return 1
+    print("Sair")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

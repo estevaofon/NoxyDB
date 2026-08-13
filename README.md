@@ -142,15 +142,26 @@ are ignored by Git.
 
 ### Interactive user registry
 
-`examples/cadastro_usuarios.nx` ports the original SQLite user registry to
-NoxyDB. Each user has a dedicated key, while `usuarios:meta` stores the next ID
-and the index used for listing:
+`examples/cadastro_usuarios.py` ports the original SQLite user registry to the
+server-backed Python client. Each user has a dedicated key, while
+`usuarios:meta` stores the next ID and the index used for listing.
+
+Start the local server in another terminal, then run the Python port:
+
+```powershell
+& $env:NOXY_EXE server/noxydb_server.nx --data-dir .\data --port 8765
+python examples/cadastro_usuarios.py
+```
+
+The Python example opens the logical database `usuarios`, stored by the server
+as `data/usuarios.db`. The embedded Noxy version remains available for
+comparison and stores its database at `examples/usuarios.db`:
 
 ```powershell
 & $env:NOXY_EXE examples/cadastro_usuarios.nx
 ```
 
-The database is stored at `examples/usuarios.db` and is ignored by Git.
+Both generated database files are ignored by Git.
 
 ## API
 

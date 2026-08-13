@@ -184,6 +184,59 @@ class RegistryTests(unittest.TestCase):
                     "Erro: falha ao atualizar o índice: " + message,
                 )
 
+    def test_loading_as_non_main_does_not_connect_or_run_menu(self) -> None:
+        import runpy
+        from pathlib import Path
+
+        script = Path(cadastro_usuarios.__file__)
+        with patch("noxydb.NoxyDBClient") as client_type:
+            runpy.run_path(str(script), run_name="cadastro_usuarios_import_test")
+        client_type.assert_not_called()
+
+    def test_main_opens_usuarios_runs_exit_option_and_closes(self) -> None:
+        db = MemoryDatabase()
+        output = io.StringIO()
+        with patch.object(cadastro_usuarios, "NoxyDBClient") as client_type:
+            client_type.return_value.open_database.return_value = db
+            with patch.object(cadastro_usuarios.os, "system") as clear:
+                with patch("builtins.input", side_effect=["x", "5"]):
+                    with redirect_stdout(output):
+                        status = cadastro_usuarios.main()
+
+        self.assertEqual(status, 0)
+        client_type.assert_called_once_with()
+        client_type.return_value.open_database.assert_called_once_with("usuarios")
+        self.assertEqual(clear.call_args_list, [call("cls")] * 2)
+        self.assertTrue(db.closed)
+        self.assertIn("Sistema de Gerenciamento de Usuários", output.getvalue())
+        self.assertIn("Opção inválida.", output.getvalue())
+        self.assertTrue(output.getvalue().rstrip().endswith("Sair"))
+
+    def test_main_reports_open_and_close_failures(self) -> None:
+        with self.subTest(operation="open"):
+            output = io.StringIO()
+            with patch.object(cadastro_usuarios, "NoxyDBClient") as client_type:
+                client_type.return_value.open_database.side_effect = NoxyDBConnectionError(
+                    "offline"
+                )
+                with redirect_stdout(output):
+                    self.assertEqual(cadastro_usuarios.main(), 1)
+            self.assertEqual(output.getvalue().strip(), "Erro ao abrir banco: offline")
+
+        with self.subTest(operation="close"):
+            db = MemoryDatabase()
+            db.close_error = NoxyDBConnectionError("close failed")
+            output = io.StringIO()
+            with patch.object(cadastro_usuarios, "NoxyDBClient") as client_type:
+                client_type.return_value.open_database.return_value = db
+                with patch.object(cadastro_usuarios.os, "system"):
+                    with patch("builtins.input", side_effect=["5"]):
+                        with redirect_stdout(output):
+                            self.assertEqual(cadastro_usuarios.main(), 1)
+            self.assertTrue(
+                output.getvalue().rstrip().endswith("Erro ao fechar banco: close failed")
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
