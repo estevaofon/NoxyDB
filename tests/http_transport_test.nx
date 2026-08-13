@@ -1,0 +1,31 @@
+use server.http_transport as transport
+use server.protocol as protocol
+use tests.assertions as assertions
+use strings
+
+let complete: bytes = b"POST /v1/open HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 23\r\n\r\n{\"database\":\"usuarios\"}"
+let parsed: transport.HttpReadResult = transport.assemble_request(complete)
+assertions.assert_true(parsed.complete, "complete request should parse")
+assertions.assert_true(parsed.valid, "complete request should be valid")
+assertions.assert_string(parsed.method, "POST", "method should parse")
+assertions.assert_string(parsed.path, "/v1/open", "path should parse")
+assertions.assert_string(to_str(parsed.body), "{\"database\":\"usuarios\"}", "body should parse")
+
+let partial: transport.HttpReadResult = transport.assemble_request(b"POST /v1/open HTTP/1.1\r\nContent-Length: 23\r\n\r\n{\"data")
+assertions.assert_false(partial.complete, "partial body should request more bytes")
+
+let malformed_length: transport.HttpReadResult = transport.assemble_request(b"POST /v1/open HTTP/1.1\r\nContent-Length: abc\r\n\r\n")
+assertions.assert_false(malformed_length.valid, "non-decimal length should be rejected")
+assertions.assert_string(malformed_length.error, "invalid Content-Length", "length error should be stable")
+
+let duplicate_length: transport.HttpReadResult = transport.assemble_request(b"POST /v1/open HTTP/1.1\r\nContent-Length: 0\r\nContent-Length: 0\r\n\r\n")
+assertions.assert_false(duplicate_length.valid, "duplicate length should be rejected")
+
+let response: bytes = transport.build_http_response(protocol.ApiResponse(200, "{\"success\":true}"))
+let response_text: string = to_str(response)
+assertions.assert_true(strings.starts_with(response_text, "HTTP/1.1 200 OK\r\n"), "status line should be correct")
+assertions.assert_true(strings.contains(response_text, "Content-Type: application/json\r\n"), "content type should be JSON")
+assertions.assert_true(strings.contains(response_text, "Content-Length: 16\r\n"), "content length should count bytes")
+assertions.assert_true(strings.ends_with(response_text, "\r\n\r\n{\"success\":true}"), "body should follow headers")
+
+print("HTTP transport tests passed")

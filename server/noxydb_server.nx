@@ -1,0 +1,79 @@
+use io
+use sys
+use strings
+use server.database_worker as worker
+use server.http_transport as transport
+
+struct ServerOptions
+    valid: bool
+    data_dir: string
+    port: int
+    error: string
+end
+
+func decimal_token(value: string) -> bool
+    if length(value) == 0 then return false end
+    let index: int = 0
+    while index < length(value) do
+        if !strings.is_digit(strings.char_at(value, index)) then return false end
+        index = index + 1
+    end
+    return true
+end
+
+func parse_port(value: string) -> ServerOptions
+    if !decimal_token(value) then return ServerOptions(false, "", 0, "port must be a decimal number") end
+    let first_significant: int = 0
+    while first_significant < length(value) && strings.char_at(value, first_significant) == "0" do
+        first_significant = first_significant + 1
+    end
+    let normalized: string = "0"
+    if first_significant < length(value) then normalized = strings.substring(value, first_significant, length(value)) end
+    if length(normalized) > 5 then return ServerOptions(false, "", 0, "port must be between 1 and 65535") end
+    let port: int = to_int(normalized)
+    if port < 1 || port > 65535 then return ServerOptions(false, "", 0, "port must be between 1 and 65535") end
+    return ServerOptions(true, "", port, "")
+end
+
+func parse_options(args: string[]) -> ServerOptions
+    let data_dir: string = ""
+    let port: int = 8765
+    let index: int = 2
+    while index < length(args) do
+        if args[index] == "--data-dir" && index + 1 < length(args) then
+            data_dir = args[index + 1]
+            index = index + 2
+        elif args[index] == "--port" && index + 1 < length(args) then
+            let parsed_port: ServerOptions = parse_port(args[index + 1])
+            if !parsed_port.valid then return parsed_port end
+            port = parsed_port.port
+            index = index + 2
+        else
+            return ServerOptions(false, "", 0, "usage: noxy noxydb_server.nx --data-dir <path> [--port <1-65535>]")
+        end
+    end
+    if data_dir == "" then return ServerOptions(false, "", 0, "--data-dir is required") end
+    if port < 1 || port > 65535 then return ServerOptions(false, "", 0, "port must be between 1 and 65535") end
+    return ServerOptions(true, data_dir, port, "")
+end
+
+let options: ServerOptions = parse_options(sys.argv())
+if !options.valid then
+    print(options.error)
+    sys.exit(2)
+end
+if io.exists(options.data_dir) then
+    if !io.stat(options.data_dir).is_dir then
+        print("data path is not a directory")
+        sys.exit(2)
+    end
+elif !io.mkdir(options.data_dir) then
+    print("failed to create data directory")
+    sys.exit(2)
+end
+
+let commands: chan any = make_chan(64)
+spawn(worker.run_database_worker, commands, options.data_dir)
+print("NoxyDB server listening on http://127.0.0.1:" + to_str(options.port))
+transport.serve_local(options.port, commands)
+chan_close(commands)

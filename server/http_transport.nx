@@ -1,0 +1,185 @@
+use net
+use strings
+use server.protocol as protocol
+use server.database_worker as worker
+
+let MAX_REQUEST_BYTES: int = 1048576
+
+struct HttpReadResult
+    complete: bool
+    valid: bool
+    method: string
+    path: string
+    body: bytes
+    expected_bytes: int
+    error: string
+end
+
+func http_result(complete: bool, valid: bool, method: string, path: string, body: bytes, expected_bytes: int, error: string) -> HttpReadResult
+    return HttpReadResult(complete, valid, method, path, body, expected_bytes, error)
+end
+
+func invalid_request(error: string) -> HttpReadResult
+    return http_result(true, false, "", "", b"", 0, error)
+end
+
+func find_header_end(buffer: bytes) -> int
+    let index: int = 0
+    while index + 3 < length(buffer) do
+        if buffer[index] == 13 && buffer[index + 1] == 10 && buffer[index + 2] == 13 && buffer[index + 3] == 10 then
+            return index
+        end
+        index = index + 1
+    end
+    return -1
+end
+
+func decimal_length(value: string) -> bool
+    if length(value) == 0 then return false end
+    let index: int = 0
+    while index < length(value) do
+        if !strings.is_digit(strings.char_at(value, index)) then return false end
+        index = index + 1
+    end
+    return true
+end
+
+func assemble_request(buffer: bytes) -> HttpReadResult
+    if length(buffer) > MAX_REQUEST_BYTES then return invalid_request("request too large") end
+
+    let header_end: int = find_header_end(buffer)
+    if header_end == -1 then
+        return http_result(false, true, "", "", b"", 0, "")
+    end
+
+    let header_text: string = to_str(slice(buffer, 0, header_end))
+    let lines: strings.SplitResult = strings.split(header_text, "\r\n")
+    if lines.count == 0 then return invalid_request("invalid request line") end
+
+    let request_parts: strings.SplitResult = strings.split(lines.parts[0], " ")
+    if request_parts.count != 3 then return invalid_request("invalid request line") end
+
+    let content_length_count: int = 0
+    let content_length: int = 0
+    let line_index: int = 1
+    while line_index < lines.count do
+        let line: string = lines.parts[line_index]
+        let colon: int = strings.index_of(line, ":")
+        if colon <= 0 then return invalid_request("invalid header") end
+        let name: string = strings.to_lower(strings.trim(strings.substring(line, 0, colon)))
+        if name == "content-length" then
+            content_length_count = content_length_count + 1
+            if content_length_count > 1 then return invalid_request("duplicate Content-Length") end
+            let value: string = strings.trim(strings.substring(line, colon + 1, length(line)))
+            if !decimal_length(value) then return invalid_request("invalid Content-Length") end
+            if length(value) > 7 then return invalid_request("request too large") end
+            content_length = to_int(value)
+            if content_length > MAX_REQUEST_BYTES then return invalid_request("request too large") end
+        end
+        line_index = line_index + 1
+    end
+
+    let body_start: int = header_end + 4
+    let expected_bytes: int = body_start + content_length
+    if expected_bytes > MAX_REQUEST_BYTES then return invalid_request("request too large") end
+    if length(buffer) < expected_bytes then
+        return http_result(false, true, request_parts.parts[0], request_parts.parts[1], b"", expected_bytes, "")
+    end
+    if length(buffer) > expected_bytes then return invalid_request("surplus request body") end
+
+    let body: bytes = b""
+    if content_length > 0 then body = slice(buffer, body_start, expected_bytes) end
+    return http_result(true, true, request_parts.parts[0], request_parts.parts[1], body, expected_bytes, "")
+end
+
+func operation_for(method: string, path: string) -> string
+    if method == "POST" && path == "/v1/open" then return "open" end
+    if method == "POST" && path == "/v1/put" then return "put" end
+    if method == "POST" && path == "/v1/get" then return "get" end
+    if method == "POST" && path == "/v1/exists" then return "exists" end
+    if method == "POST" && path == "/v1/remove" then return "remove" end
+    if method == "POST" && path == "/v1/close" then return "close" end
+    return ""
+end
+
+func route_request(request: HttpReadResult, commands: chan any) -> protocol.ApiResponse
+    if request.method == "GET" && request.path == "/v1/health" then
+        return protocol.api_success({"success": true, "status": "ok"})
+    end
+    let operation: string = operation_for(request.method, request.path)
+    if operation == "" then
+        if request.path == "/v1/health" || request.path == "/v1/open" || request.path == "/v1/put" || request.path == "/v1/get" || request.path == "/v1/exists" || request.path == "/v1/remove" || request.path == "/v1/close" then
+            return protocol.api_error(405, "method not allowed")
+        end
+        return protocol.api_error(404, "not found")
+    end
+    let decoded: protocol.ApiRequest = protocol.decode_api_request(operation, request.body)
+    if !decoded.valid then return protocol.api_error(400, decoded.error) end
+    let reply: any = make_chan(0)
+    let command: worker.DatabaseCommand = worker.DatabaseCommand(decoded.operation, decoded.database, decoded.key, decoded.value, reply)
+    chan_send(commands, command)
+    let response: protocol.ApiResponse = chan_recv(reply)
+    chan_close(reply)
+    return response
+end
+
+func reason_phrase(status: int) -> string
+    if status == 200 then return "OK" end
+    if status == 400 then return "Bad Request" end
+    if status == 404 then return "Not Found" end
+    if status == 405 then return "Method Not Allowed" end
+    if status == 409 then return "Conflict" end
+    if status == 500 then return "Internal Server Error" end
+    return "Internal Server Error"
+end
+
+func build_http_response(response: protocol.ApiResponse) -> bytes
+    let body: bytes = to_bytes(response.json)
+    let headers: string = "HTTP/1.1 " + to_str(response.status) + " " + reason_phrase(response.status) + "\r\nContent-Type: application/json\r\nContent-Length: " + to_str(length(body)) + "\r\nConnection: close\r\n\r\n"
+    return to_bytes(headers) + body
+end
+
+func read_http_request(client: net.Socket) -> HttpReadResult
+    let buffer: bytes = b""
+    while true do
+        let received: net.NetResult = net.socket_recv(client, 65536)
+        if !received.ok then return invalid_request("failed to read request") end
+        if received.count == 0 then return invalid_request("incomplete request") end
+        buffer = buffer + slice(received.data, 0, received.count)
+        let request: HttpReadResult = assemble_request(buffer)
+        if request.complete || !request.valid then return request end
+        if length(buffer) >= MAX_REQUEST_BYTES then return invalid_request("request too large") end
+    end
+    return invalid_request("failed to read request")
+end
+
+func handle_client(client: net.Socket, commands: chan any) -> void
+    let request: HttpReadResult = read_http_request(client)
+    let response: protocol.ApiResponse = protocol.api_error(400, request.error)
+    if request.complete && request.valid then response = route_request(request, commands) end
+    let response_bytes: bytes = build_http_response(response)
+    let sent_bytes: int = 0
+    while sent_bytes < length(response_bytes) do
+        let sent: net.NetResult = net.socket_send(client, slice(response_bytes, sent_bytes, length(response_bytes)))
+        if !sent.ok || sent.count <= 0 then
+            break
+        end
+        sent_bytes = sent_bytes + sent.count
+    end
+    net.socket_close(client)
+end
+
+func serve_local(port: int, commands: chan any) -> void
+    let listener: net.Socket = net.listen("127.0.0.1", port)
+    if !listener.open then
+        print("failed to listen on 127.0.0.1:" + to_str(port))
+        return
+    end
+    while true do
+        let client: net.Socket = net.accept(listener)
+        if client.open then
+            spawn(handle_client, client, commands)
+        end
+    end
+    net.socket_close(listener)
+end
