@@ -102,6 +102,30 @@ The server accepts connections only on `127.0.0.1`. It has no authentication
 because it is local-only. Do not share a database's `.db` file with another
 NoxyDB process concurrently.
 
+Each connection has a 1,000 ms read-idle deadline and a finite absolute
+deadline. The absolute allowance is 1,000 ms plus 1 ms per 32 possible request
+bytes (about 33.8 seconds at the 1 MiB limit); after valid headers expose a
+smaller declared body, it is shortened to the corresponding remaining size.
+This stable size allowance accommodates the runtime's byte-safe polling path
+without letting a slow client keep a handler indefinitely. A timed-out client
+receives a JSON `400 Bad Request` response and its socket is closed.
+NoxyDB serializes each poll-and-receive pair through a server-local semaphore
+because the current runtime's polling buffer is not safe for concurrent map
+writes; 10 ms poll slices prevent a stalled client from monopolizing it.
+After the declared body is complete, the server performs one immediate
+readiness probe (`net_select` with a requested zero timeout; the current Noxy
+runtime applies its 1 ms minimum) and rejects any surplus bytes already
+available before routing. It does not wait for EOF because HTTP clients wait
+for the response. Bytes that arrive only after that probe cannot be detected
+without adding a grace wait to every request; such later bytes are discarded
+when this one-request-per-connection server closes the socket.
+
+`Database.close()` in the Python client is a logical remote close: it closes
+that client handle, while the server retains the physical database handle in
+its cache. It is therefore different from embedded Noxy
+`noxydb.close_database(db)`, which physically closes the file descriptor and
+reports any close failure.
+
 ## Executable example
 
 The complete walkthrough in `examples/documents.nx` demonstrates nested
@@ -172,10 +196,19 @@ compatibility logic.
 
 ## Lifecycle and durability
 
-The observable states remain open, normally closed, and failed. Writes reach
-the append-only log before the raw in-memory map changes. Write and close
-failures are explicit. Persistence is guaranteed after close_database()
-completes successfully; crash durability and fsync are not provided.
+For the embedded API, the observable states remain open, normally closed, and
+failed. Writes reach the append-only log before the raw in-memory map changes.
+Write and physical-close failures are explicit. Persistence is guaranteed
+after embedded `noxydb.close_database(db)` completes successfully; crash
+durability and `fsync` are not provided.
+
+The current Noxy runtime exposes no signal handling to this server.
+`serve_local` retains its existing cleanup path: if it returns, the command
+channel closes and the worker physically closes every cached database. Ctrl-C,
+Task Manager termination, and other process termination are abrupt, do not run
+that physical-close path, and retain the same crash-durability limitations.
+The append-only log can be replayed on restart, subject to the documented
+limitations above.
 
 Queries, JSON Path, partial updates, indexes, schemas, collections, filters,
 compaction, TTL, remote networking, transactions, replication, and sharding

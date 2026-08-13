@@ -95,7 +95,10 @@ class IntegrationTests(unittest.TestCase):
             connection.shutdown(socket.SHUT_WR)
             chunks: list[bytes] = []
             while True:
-                chunk = connection.recv(65536)
+                try:
+                    chunk = connection.recv(65536)
+                except ConnectionResetError:
+                    return b"".join(chunks)
                 if not chunk:
                     return b"".join(chunks)
                 chunks.append(chunk)
@@ -150,9 +153,20 @@ class IntegrationTests(unittest.TestCase):
 
     def test_incomplete_client_does_not_block_other_clients(self) -> None:
         with socket.create_connection(("127.0.0.1", self.port), timeout=5) as stalled:
+            stalled.settimeout(2.5)
             stalled.sendall(b"GET /v1/health HTTP/1.1\r\nHost: 127.0.0.1\r\n")
             responsive_client = NoxyDBClient(self.base_url, timeout=0.5)
             self.assertTrue(responsive_client.health())
+            chunks: list[bytes] = []
+            while True:
+                chunk = stalled.recv(65536)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+
+        response = b"".join(chunks)
+        self.assertTrue(response.startswith(b"HTTP/1.1 400 Bad Request\r\n"))
+        self.assertIn(b'"error":"request read timeout"', response)
 
     def test_persistence_after_daemon_restart(self) -> None:
         db = self.client.open_database("persistent")
@@ -171,6 +185,18 @@ class IntegrationTests(unittest.TestCase):
         )
         self.assertTrue(response.startswith(b"HTTP/1.1 200 OK\r\n"))
         self.assertIn(b'{"success":true', response)
+
+    def test_fragmented_surplus_is_rejected_before_routing(self) -> None:
+        response = self._raw_http(
+            [
+                b"POST /v1/open HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 22\r\n\r\n",
+                b'{"database":"surplus"}',
+                b"GET /v1/health HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            ]
+        )
+        self.assertTrue(response.startswith(b"HTTP/1.1 400 Bad Request\r\n"))
+        self.assertIn(b'"error":"surplus request body"', response)
+        self.assertFalse((self.data_dir / "surplus.db").exists())
 
     def test_declared_request_over_one_mib_is_rejected(self) -> None:
         response = self._raw_http(

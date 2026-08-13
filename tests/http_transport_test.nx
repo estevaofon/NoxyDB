@@ -21,6 +21,20 @@ assertions.assert_string(malformed_length.error, "invalid Content-Length", "leng
 let duplicate_length: transport.HttpReadResult = transport.assemble_request(b"POST /v1/open HTTP/1.1\r\nContent-Length: 0\r\nContent-Length: 0\r\n\r\n")
 assertions.assert_false(duplicate_length.valid, "duplicate length should be rejected")
 
+let padded_length: transport.HttpReadResult = transport.assemble_request(b"POST /v1/open HTTP/1.1\r\nContent-Length: 000000023\r\n\r\n{\"database\":\"usuarios\"}")
+assertions.assert_true(padded_length.complete, "leading-zero length should complete numerically")
+assertions.assert_true(padded_length.valid, "leading-zero length within the limit should be accepted")
+
+let padded_too_large: transport.HttpReadResult = transport.assemble_request(b"POST /v1/open HTTP/1.1\r\nContent-Length: 00001048577\r\n\r\n")
+assertions.assert_false(padded_too_large.valid, "leading-zero length over the limit should be rejected by value")
+assertions.assert_string(padded_too_large.error, "request too large", "oversized numeric length should have a stable error")
+
+let maximum_unterminated: bytes = to_bytes(strings.repeat("x", 1048576))
+let maximum_unterminated_result: transport.HttpReadResult = transport.assemble_request(maximum_unterminated)
+assertions.assert_true(maximum_unterminated_result.complete, "an unterminated maximum-size header cannot accept more bytes")
+assertions.assert_false(maximum_unterminated_result.valid, "an unterminated maximum-size header should be rejected")
+assertions.assert_string(maximum_unterminated_result.error, "incomplete request", "maximum-size unterminated headers are framing errors")
+
 assertions.assert_int(transport.next_receive_size(0), 65536, "initial receive should use one chunk")
 assertions.assert_int(transport.next_receive_size(1048575), 1, "receive should be limited to remaining request bytes")
 assertions.assert_int(transport.next_receive_size(1048576), 0, "receive should stop at the request byte limit")

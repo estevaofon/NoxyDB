@@ -1,9 +1,13 @@
 use net
 use strings
+use time
 use server.protocol as protocol
 use server.database_worker as worker
 
 let MAX_REQUEST_BYTES: int = 1048576
+let REQUEST_READ_IDLE_TIMEOUT_MS: int = 1000
+let REQUEST_BODY_BYTES_PER_TIMEOUT_MS: int = 32
+let READ_POLL_SLICE_MS: int = 10
 
 struct HttpReadResult
     complete: bool
@@ -13,6 +17,13 @@ struct HttpReadResult
     body: bytes
     expected_bytes: int
     error: string
+end
+
+struct PollReceiveResult
+    ready: bool
+    ok: bool
+    data: bytes
+    count: int
 end
 
 func http_result(complete: bool, valid: bool, method: string, path: string, body: bytes, expected_bytes: int, error: string) -> HttpReadResult
@@ -49,6 +60,7 @@ func assemble_request(buffer: bytes) -> HttpReadResult
 
     let header_end: int = find_header_end(buffer)
     if header_end == -1 then
+        if length(buffer) == MAX_REQUEST_BYTES then return invalid_request("incomplete request") end
         return http_result(false, true, "", "", b"", 0, "")
     end
 
@@ -72,8 +84,14 @@ func assemble_request(buffer: bytes) -> HttpReadResult
             if content_length_count > 1 then return invalid_request("duplicate Content-Length") end
             let value: string = strings.trim(strings.substring(line, colon + 1, length(line)))
             if !decimal_length(value) then return invalid_request("invalid Content-Length") end
-            if length(value) > 7 then return invalid_request("request too large") end
-            content_length = to_int(value)
+            let first_significant: int = 0
+            while first_significant < length(value) && strings.char_at(value, first_significant) == "0" do
+                first_significant = first_significant + 1
+            end
+            let normalized: string = "0"
+            if first_significant < length(value) then normalized = strings.substring(value, first_significant, length(value)) end
+            if length(normalized) > 7 then return invalid_request("request too large") end
+            content_length = to_int(normalized)
             if content_length > MAX_REQUEST_BYTES then return invalid_request("request too large") end
         end
         line_index = line_index + 1
@@ -146,24 +164,75 @@ func next_receive_size(buffered_bytes: int) -> int
     return 65536
 end
 
-func read_http_request(client: net.Socket) -> HttpReadResult
+func poll_receive(client: net.Socket, timeout_ms: int, network_io: chan any) -> PollReceiveResult
+    chan_recv(network_io)
+    let read_sockets: net.Socket[64]
+    let empty_write_sockets: net.Socket[64]
+    let empty_error_sockets: net.Socket[64]
+    read_sockets[0] = client
+    let selected: any = net_select(read_sockets, empty_write_sockets, empty_error_sockets, timeout_ms)
+    let ok: bool = false
+    let data: bytes = b""
+    let count: int = 0
+    let readable: bool = selected.read_count > 0
+    while selected.read_count > 0 && count < 65536 do
+        let received: net.NetResult = net.socket_recv(client, 1)
+        ok = received.ok
+        if !received.ok || received.count == 0 then
+            break
+        end
+        data = data + slice(received.data, 0, received.count)
+        count = count + received.count
+        selected = net_select(read_sockets, empty_write_sockets, empty_error_sockets, 0)
+    end
+    chan_send(network_io, true)
+    return PollReceiveResult(readable, ok, data, count)
+end
+
+func has_immediate_surplus(client: net.Socket, network_io: chan any) -> bool
+    let result: PollReceiveResult = poll_receive(client, 0, network_io)
+    return result.ready && result.ok && result.count > 0
+end
+
+func read_http_request(client: net.Socket, network_io: chan any) -> HttpReadResult
     let buffer: bytes = b""
+    let expected_bytes: int = 0
+    let started_at: int = time.now_ms()
+    let idle_deadline: int = started_at + REQUEST_READ_IDLE_TIMEOUT_MS
+    let absolute_deadline: int = started_at + REQUEST_READ_IDLE_TIMEOUT_MS + MAX_REQUEST_BYTES / REQUEST_BODY_BYTES_PER_TIMEOUT_MS
     while true do
-        let receive_size: int = next_receive_size(length(buffer))
-        if receive_size == 0 then return invalid_request("request too large") end
-        let received: net.NetResult = net.socket_recv(client, receive_size)
-        if !received.ok then return invalid_request("failed to read request") end
-        if received.count == 0 then return invalid_request("incomplete request") end
-        buffer = buffer + slice(received.data, 0, received.count)
-        let request: HttpReadResult = assemble_request(buffer)
-        if request.complete || !request.valid then return request end
-        if length(buffer) >= MAX_REQUEST_BYTES then return invalid_request("request too large") end
+        let poll_deadline: int = idle_deadline
+        if absolute_deadline < poll_deadline then poll_deadline = absolute_deadline end
+        let remaining_ms: int = poll_deadline - time.now_ms()
+        if remaining_ms <= 0 then return invalid_request("request read timeout") end
+        let poll_timeout_ms: int = remaining_ms
+        if poll_timeout_ms > READ_POLL_SLICE_MS then poll_timeout_ms = READ_POLL_SLICE_MS end
+        let polled: PollReceiveResult = poll_receive(client, poll_timeout_ms, network_io)
+        if polled.ready then
+            if !polled.ok then return invalid_request("failed to read request") end
+            if polled.count == 0 then return invalid_request("incomplete request") end
+            buffer = buffer + slice(polled.data, 0, polled.count)
+            idle_deadline = time.now_ms() + REQUEST_READ_IDLE_TIMEOUT_MS
+
+            let request: HttpReadResult = assemble_request(buffer)
+            if request.complete then
+                if request.valid && has_immediate_surplus(client, network_io) then return invalid_request("surplus request body") end
+                return request
+            end
+            if !request.valid then return request end
+            if expected_bytes == 0 && request.expected_bytes > 0 then
+                expected_bytes = request.expected_bytes
+                let remaining_body_bytes: int = expected_bytes - length(buffer)
+                let body_absolute_deadline: int = time.now_ms() + REQUEST_READ_IDLE_TIMEOUT_MS + remaining_body_bytes / REQUEST_BODY_BYTES_PER_TIMEOUT_MS
+                if body_absolute_deadline < absolute_deadline then absolute_deadline = body_absolute_deadline end
+            end
+        end
     end
     return invalid_request("failed to read request")
 end
 
-func handle_client(client: net.Socket, commands: chan any) -> void
-    let request: HttpReadResult = read_http_request(client)
+func handle_client(client: net.Socket, commands: chan any, network_io: chan any) -> void
+    let request: HttpReadResult = read_http_request(client, network_io)
     let response: protocol.ApiResponse = protocol.api_error(400, request.error)
     if request.complete && request.valid then response = route_request(request, commands) end
     let response_bytes: bytes = build_http_response(response)
@@ -178,8 +247,8 @@ func handle_client(client: net.Socket, commands: chan any) -> void
     net.socket_close(client)
 end
 
-func run_client_handler(client: net.Socket, commands: chan any, handler: func) -> void
-    handler(client, commands)
+func run_client_handler(client: net.Socket, commands: chan any, network_io: chan any, handler: func) -> void
+    handler(client, commands, network_io)
 end
 
 func serve_local(port: int, commands: chan any) -> void
@@ -188,11 +257,14 @@ func serve_local(port: int, commands: chan any) -> void
         print("failed to listen on 127.0.0.1:" + to_str(port))
         return
     end
+    let network_io: chan any = make_chan(1)
+    chan_send(network_io, true)
     while true do
         let client: net.Socket = net.accept(listener)
         if client.open then
-            spawn(run_client_handler, client, commands, handle_client)
+            spawn(run_client_handler, client, commands, network_io, handle_client)
         end
     end
+    chan_close(network_io)
     net.socket_close(listener)
 end

@@ -323,6 +323,19 @@ class ClientTests(unittest.TestCase):
                 with self.assertRaisesRegex(NoxyDBValidationError, "signed 64-bit range"):
                     db.put("invalid", {"value": value})
 
+    def test_rejects_isolated_surrogates_as_validation_errors(self) -> None:
+        db = self._open_database()
+
+        for document in ({"value": "\ud800"}, {"\udfff": "value"}):
+            with self.subTest(document=document):
+                with self.assertRaisesRegex(NoxyDBValidationError, "isolated surrogate"):
+                    db.put("invalid", document)
+
+        with self.assertRaisesRegex(NoxyDBValidationError, "isolated surrogate"):
+            db.get("\ud800")
+
+        self.assertEqual(len(self.server.requests), 1)
+
     def test_http_server_error_exposes_status_and_message(self) -> None:
         self.server.responses.append((409, {"success": False, "error": "database is not open"}))
 
@@ -436,6 +449,16 @@ class ClientTests(unittest.TestCase):
         )
 
         self.assertEqual(db.get("present"), LookupResult(True, {}))
+
+    def test_lookup_rejects_documents_outside_the_noxy_json_domain(self) -> None:
+        invalid_documents = [
+            b'{"found":true,"value":{"nested":[9223372036854775808]},"error":""}',
+            b'{"found":true,"value":{"text":"\\ud800"},"error":""}',
+        ]
+        for response in invalid_documents:
+            with self.subTest(response=response):
+                db = Database(self.client, "usuarios")
+                self._assert_response_rejected(response, lambda: db.get("key"))
 
     def test_malformed_exists_envelopes_raise_connection_error(self) -> None:
         malformed = [

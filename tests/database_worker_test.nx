@@ -4,44 +4,50 @@ use server.database_worker as worker
 use server.protocol as protocol
 use tests.assertions as assertions
 use strings
+use time
 
-let data_dir: string = "tests/tmp_server_worker"
-if !io.exists(data_dir) then assertions.assert_true(io.mkdir(data_dir), "test directory should be created") end
+let data_dir: string = "tests/tmp_server_worker_" + to_str(time.now_ms())
+let directory_created: bool = io.mkdir(data_dir)
 let first_path: string = data_dir + "/usuarios.db"
 let second_path: string = data_dir + "/pedidos.db"
-if io.exists(first_path) then io.remove(first_path) end
-if io.exists(second_path) then io.remove(second_path) end
 
 let databases: map[string, noxydb.Database]
 
 let open_users: protocol.ApiResponse = worker.execute_database_command(ref databases, data_dir, worker.new_database_command("open", "usuarios", "", {}))
-assertions.assert_int(open_users.status, 200, "open should succeed")
-assertions.assert_true(io.exists(first_path), "open should create database")
+let first_created: bool = io.exists(first_path)
 
 let document: map[string, any] = {"name": "Estevão", "active": true}
 let put_user: protocol.ApiResponse = worker.execute_database_command(ref databases, data_dir, worker.new_database_command("put", "usuarios", "user:1", document))
-assertions.assert_int(put_user.status, 200, "put should succeed")
 
 let get_user: protocol.ApiResponse = worker.execute_database_command(ref databases, data_dir, worker.new_database_command("get", "usuarios", "user:1", {}))
-assertions.assert_true(strings.contains(get_user.json, "Estevão"), "get should return stored document")
 
 let missing: protocol.ApiResponse = worker.execute_database_command(ref databases, data_dir, worker.new_database_command("get", "usuarios", "missing", {}))
-assertions.assert_true(strings.contains(missing.json, "\"found\":false"), "missing get should be explicit")
 
 let before_open: protocol.ApiResponse = worker.execute_database_command(ref databases, data_dir, worker.new_database_command("exists", "pedidos", "order:1", {}))
-assertions.assert_int(before_open.status, 409, "unopened database should conflict")
 
 let open_orders: protocol.ApiResponse = worker.execute_database_command(ref databases, data_dir, worker.new_database_command("open", "pedidos", "", {}))
-assertions.assert_int(open_orders.status, 200, "second database should open")
 let isolated: protocol.ApiResponse = worker.execute_database_command(ref databases, data_dir, worker.new_database_command("exists", "pedidos", "user:1", {}))
-assertions.assert_true(strings.contains(isolated.json, "\"exists\":false"), "databases should be isolated")
 
 let remove_user: protocol.ApiResponse = worker.execute_database_command(ref databases, data_dir, worker.new_database_command("remove", "usuarios", "user:1", {}))
-assertions.assert_int(remove_user.status, 200, "remove should succeed")
 let remove_again: protocol.ApiResponse = worker.execute_database_command(ref databases, data_dir, worker.new_database_command("remove", "usuarios", "user:1", {}))
-assertions.assert_int(remove_again.status, 200, "remove should be idempotent")
 
 worker.close_all_databases(ref databases)
-if io.exists(first_path) then io.remove(first_path) end
-if io.exists(second_path) then io.remove(second_path) end
+let first_removed: bool = !io.exists(first_path) || io.remove(first_path)
+let second_removed: bool = !io.exists(second_path) || io.remove(second_path)
+let directory_removed: bool = !io.exists(data_dir) || io.remove(data_dir)
+
+assertions.assert_true(directory_created, "unique test directory should be created")
+assertions.assert_int(open_users.status, 200, "open should succeed")
+assertions.assert_true(first_created, "open should create database")
+assertions.assert_int(put_user.status, 200, "put should succeed")
+assertions.assert_true(strings.contains(get_user.json, "Estevão"), "get should return stored document")
+assertions.assert_true(strings.contains(missing.json, "\"found\":false"), "missing get should be explicit")
+assertions.assert_int(before_open.status, 409, "unopened database should conflict")
+assertions.assert_int(open_orders.status, 200, "second database should open")
+assertions.assert_true(strings.contains(isolated.json, "\"exists\":false"), "databases should be isolated")
+assertions.assert_int(remove_user.status, 200, "remove should succeed")
+assertions.assert_int(remove_again.status, 200, "remove should be idempotent")
+assertions.assert_true(first_removed, "first test database should be removed")
+assertions.assert_true(second_removed, "second test database should be removed")
+assertions.assert_true(directory_removed, "unique test directory should be removed")
 print("database worker tests passed")

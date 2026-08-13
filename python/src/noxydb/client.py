@@ -18,8 +18,18 @@ _MIN_INT64 = -(2**63)
 _MAX_INT64 = 2**63 - 1
 
 
+def _validate_string(value: str) -> None:
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise NoxyDBValidationError("string contains an isolated surrogate") from error
+
+
 def _validate_json_value(value: object, active: set[int]) -> None:
-    if value is None or isinstance(value, (bool, str)):
+    if value is None or isinstance(value, bool):
+        return
+    if isinstance(value, str):
+        _validate_string(value)
         return
     if isinstance(value, int):
         if value < _MIN_INT64 or value > _MAX_INT64:
@@ -42,6 +52,7 @@ def _validate_json_value(value: object, active: set[int]) -> None:
                 for key, item in value.items():
                     if not isinstance(key, str):
                         raise NoxyDBValidationError("document keys must be strings")
+                    _validate_string(key)
                     _validate_json_value(item, active)
         finally:
             active.remove(identity)
@@ -184,6 +195,7 @@ class Database:
     def _require_key(self, key: str) -> None:
         if not isinstance(key, str):
             raise NoxyDBValidationError("key must be a string")
+        _validate_string(key)
 
     def put(self, key: str, value: dict[str, object]) -> PutResult:
         self._ensure_open()
@@ -207,6 +219,10 @@ class Database:
             raise NoxyDBConnectionError("invalid server response: value")
         if not found and value != {}:
             raise NoxyDBConnectionError("invalid server response: value")
+        try:
+            _validate_json_value(value, set())
+        except NoxyDBValidationError as error:
+            raise NoxyDBConnectionError("invalid server response: value") from error
         _require_empty_error(response)
         return LookupResult(found, value)
 
