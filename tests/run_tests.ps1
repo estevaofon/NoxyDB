@@ -38,7 +38,8 @@ $errorTests = @(
     "read_size_test.nx"
 )
 $serverTests = @(
-    "server_protocol_test.nx"
+    "server_protocol_test.nx",
+    "database_worker_test.nx"
 )
 
 $tests = if (-not [string]::IsNullOrWhiteSpace($Test)) {

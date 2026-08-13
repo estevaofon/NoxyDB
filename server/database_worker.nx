@@ -1,0 +1,83 @@
+use noxydb
+use server.protocol as protocol
+
+struct DatabaseCommand
+    operation: string
+    database: string
+    key: string
+    value: map[string, any]
+    response: any
+end
+
+func new_database_command(operation: string, database: string, key: string, value: map[string, any]) -> DatabaseCommand
+    return DatabaseCommand(operation, database, key, value, null)
+end
+
+func database_path(data_dir: string, name: string) -> string
+    return data_dir + "/" + name + ".db"
+end
+
+func execute_database_command(databases: ref map[string, noxydb.Database], data_dir: string, command: DatabaseCommand) -> protocol.ApiResponse
+    if command.operation == "open" then
+        if has_key(databases, command.database) then
+            let cached: noxydb.Database = databases[command.database]
+            if !noxydb.is_open(cached) then return protocol.api_error(500, noxydb.database_error(cached)) end
+        else
+            let db: noxydb.Database = noxydb.open_database(database_path(data_dir, command.database))
+            if !noxydb.is_open(db) then return protocol.api_error(500, noxydb.database_error(db)) end
+            databases[command.database] = db
+        end
+        return protocol.api_success({"success": true, "error": ""})
+    end
+    if !has_key(databases, command.database) then return protocol.api_error(409, "database is not open") end
+
+    let db: noxydb.Database = databases[command.database]
+    if !noxydb.is_open(db) then return protocol.api_error(500, noxydb.database_error(db)) end
+    if command.operation == "put" then
+        let result: noxydb.PutResult = noxydb.put(db, command.key, command.value)
+        if !result.success then return protocol.api_error(500, result.error) end
+        return protocol.api_success({"success": true, "error": ""})
+    end
+    if command.operation == "get" then
+        let result: noxydb.LookupResult = noxydb.get(db, command.key)
+        if noxydb.database_error(db) != "" then return protocol.api_error(500, noxydb.database_error(db)) end
+        return protocol.api_success({"found": result.found, "value": result.value, "error": ""})
+    end
+    if command.operation == "exists" then
+        return protocol.api_success({"exists": noxydb.exists(db, command.key), "error": ""})
+    end
+    if command.operation == "remove" then
+        noxydb.remove(db, command.key)
+        if noxydb.database_error(db) != "" then return protocol.api_error(500, noxydb.database_error(db)) end
+        return protocol.api_success({"success": true, "error": ""})
+    end
+    if command.operation == "close" then
+        return protocol.api_success({"success": true, "error": ""})
+    end
+    return protocol.api_error(404, "unknown operation")
+end
+
+func run_database_worker(commands: chan any, data_dir: string) -> void
+    let databases: map[string, noxydb.Database]
+    let running: bool = true
+    while running do
+        let raw: any = chan_recv(commands)
+        if raw == null && chan_is_closed(commands) then
+            running = false
+        else
+            let command: DatabaseCommand = raw
+            let response: protocol.ApiResponse = execute_database_command(ref databases, data_dir, command)
+            chan_send(command.response, response)
+        end
+    end
+    close_all_databases(ref databases)
+end
+
+func close_all_databases(databases: ref map[string, noxydb.Database]) -> void
+    let names: string[] = keys(databases)
+    let index: int = 0
+    while index < length(names) do
+        noxydb.close_database(databases[names[index]])
+        index = index + 1
+    end
+end
