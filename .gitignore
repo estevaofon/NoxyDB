@@ -1,5 +1,6 @@
 tests/*.db
 examples/*.db
+data/*.db
 __pycache__/
 *.py[cod]
 *.egg-info/
