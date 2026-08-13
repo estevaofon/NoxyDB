@@ -1,0 +1,39 @@
+use server.protocol as protocol
+use tests.assertions as assertions
+use strings
+
+assertions.assert_true(protocol.valid_database_name("usuarios"), "letters should be valid")
+assertions.assert_true(protocol.valid_database_name("db_2026-test"), "safe punctuation should be valid")
+assertions.assert_true(protocol.valid_database_name("a"), "one character should be valid")
+assertions.assert_true(protocol.valid_database_name("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), "64 characters should be valid")
+assertions.assert_false(protocol.valid_database_name(""), "empty name should be rejected")
+assertions.assert_false(protocol.valid_database_name("../usuarios"), "traversal should be rejected")
+assertions.assert_false(protocol.valid_database_name("usuarios.db"), "dot should be rejected")
+assertions.assert_false(protocol.valid_database_name("á"), "non-ASCII name should be rejected")
+
+let open_request: protocol.ApiRequest = protocol.decode_api_request("open", b"{\"database\":\"usuarios\"}")
+assertions.assert_true(open_request.valid, "valid open request should decode")
+assertions.assert_string(open_request.database, "usuarios", "database should decode")
+
+let put_request: protocol.ApiRequest = protocol.decode_api_request("put", b"{\"database\":\"usuarios\",\"key\":\"usuário:1\",\"value\":{\"active\":true}}")
+assertions.assert_true(put_request.valid, "valid put request should decode")
+assertions.assert_string(put_request.key, "usuário:1", "Unicode key should decode")
+assertions.assert_true(put_request.value["active"], "document should decode")
+
+let extra: protocol.ApiRequest = protocol.decode_api_request("open", b"{\"database\":\"usuarios\",\"extra\":true}")
+assertions.assert_false(extra.valid, "extra field should be rejected")
+assertions.assert_string(extra.error, "invalid request fields", "extra field error should be stable")
+
+let scalar: protocol.ApiRequest = protocol.decode_api_request("put", b"{\"database\":\"usuarios\",\"key\":\"k\",\"value\":1}")
+assertions.assert_false(scalar.valid, "scalar document should be rejected")
+
+let malformed: protocol.ApiRequest = protocol.decode_api_request("get", b"{")
+assertions.assert_false(malformed.valid, "malformed JSON should be rejected")
+assertions.assert_string(malformed.error, "invalid JSON request", "JSON error should be stable")
+
+let response: protocol.ApiResponse = protocol.api_error(409, "database is not open")
+assertions.assert_int(response.status, 409, "status should be retained")
+assertions.assert_true(strings.contains(response.json, "\"success\":false"), "error JSON should expose success")
+assertions.assert_true(strings.contains(response.json, "\"error\":\"database is not open\""), "error JSON should expose message")
+
+print("server protocol tests passed")

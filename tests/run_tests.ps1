@@ -37,6 +37,9 @@ $errorTests = @(
     "open_failure_test.nx",
     "read_size_test.nx"
 )
+$serverTests = @(
+    "server_protocol_test.nx"
+)
 
 $tests = if (-not [string]::IsNullOrWhiteSpace($Test)) {
     @($Test)
@@ -44,8 +47,10 @@ $tests = if (-not [string]::IsNullOrWhiteSpace($Test)) {
     $persistenceTests
 } elseif ($Group -eq "errors") {
     $errorTests
+} elseif ($Group -eq "server") {
+    $serverTests
 } elseif ([string]::IsNullOrWhiteSpace($Group)) {
-    $coreTests + $persistenceTests + $errorTests
+    $coreTests + $persistenceTests + $errorTests + $serverTests
 } else {
     throw "Unknown test group: $Group"
 }

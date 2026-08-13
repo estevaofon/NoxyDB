@@ -1,0 +1,104 @@
+use json
+use strings
+
+struct ApiRequest
+    valid: bool
+    operation: string
+    database: string
+    key: string
+    value: map[string, any]
+    error: string
+end
+
+struct ApiResponse
+    status: int
+    json: string
+end
+
+struct DatabaseBody
+    database: string
+end
+
+struct KeyBody
+    database: string
+    key: string
+end
+
+struct PutBody
+    database: string
+    key: string
+    value: map[string, any]
+end
+
+func invalid_request(operation: string, error: string) -> ApiRequest
+    let empty: map[string, any]
+    return ApiRequest(false, operation, "", "", empty, error)
+end
+
+func valid_database_name(name: string) -> bool
+    if length(name) < 1 || length(name) > 64 then return false end
+    let index: int = 0
+    while index < length(name) do
+        let character: string = strings.char_at(name, index)
+        if !strings.contains("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-", character) then
+            return false
+        end
+        index = index + 1
+    end
+    return true
+end
+
+func expected_field_count(operation: string) -> int
+    if operation == "put" then return 3 end
+    if operation == "get" || operation == "exists" || operation == "remove" then return 2 end
+    if operation == "open" || operation == "close" then return 1 end
+    return -1
+end
+
+func decode_api_request(operation: string, body: bytes) -> ApiRequest
+    let raw: map[string, any] = {}
+    let body_string: string = to_str(body)
+    if !json_loads(body_string, raw) then return invalid_request(operation, "invalid JSON request") end
+    let expected: int = expected_field_count(operation)
+    if expected == -1 || length(keys(raw)) != expected then return invalid_request(operation, "invalid request fields") end
+    if !has_key(raw, "database") then return invalid_request(operation, "invalid request fields") end
+    if operation == "put" then
+        if !has_key(raw, "key") || !has_key(raw, "value") then return invalid_request(operation, "invalid request fields") end
+        let decoded: PutBody = PutBody("", "", {})
+        if !json_loads(body_string, ref decoded) then return invalid_request(operation, "invalid request fields") end
+        if !valid_database_name(decoded.database) then return invalid_request(operation, "invalid database name") end
+        let encoded: json.EncodeResult = json.dumps_result(decoded.value)
+        if !encoded.success then return invalid_request(operation, "invalid document") end
+        return ApiRequest(true, operation, decoded.database, decoded.key, decoded.value, "")
+    end
+
+    if operation == "get" || operation == "exists" || operation == "remove" then
+        if !has_key(raw, "key") then return invalid_request(operation, "invalid request fields") end
+        let decoded: KeyBody = KeyBody("", "")
+        if !json_loads(body_string, ref decoded) then return invalid_request(operation, "invalid request fields") end
+        if !valid_database_name(decoded.database) then return invalid_request(operation, "invalid database name") end
+        let empty: map[string, any] = {}
+        return ApiRequest(true, operation, decoded.database, decoded.key, empty, "")
+    end
+
+    let decoded: DatabaseBody = DatabaseBody("")
+    if !json_loads(body_string, ref decoded) then return invalid_request(operation, "invalid request fields") end
+    if !valid_database_name(decoded.database) then return invalid_request(operation, "invalid database name") end
+    let empty: map[string, any] = {}
+    return ApiRequest(true, operation, decoded.database, "", empty, "")
+end
+
+func encode_response(payload: map[string, any]) -> string
+    let encoded: json.EncodeResult = json.dumps_result(payload)
+    if encoded.success then return encoded.data end
+    return "{\"success\":false,\"error\":\"failed to encode response\"}"
+end
+
+func api_success(payload: map[string, any]) -> ApiResponse
+    return ApiResponse(200, encode_response(payload))
+end
+
+func api_error(status: int, error: string) -> ApiResponse
+    let payload: map[string, any] = {"success": false, "error": error}
+    return ApiResponse(status, encode_response(payload))
+end
