@@ -1,9 +1,12 @@
 import json
 import math
+import socket
 import threading
 import unittest
+import urllib.error
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
+from unittest.mock import patch
 
 from noxydb import (
     Database,
@@ -69,6 +72,17 @@ class _RequestHandler(BaseHTTPRequestHandler):
         pass
 
 
+class _FailingErrorBody:
+    def __init__(self, error: OSError) -> None:
+        self.error = error
+
+    def read(self) -> bytes:
+        raise self.error
+
+    def close(self) -> None:
+        pass
+
+
 class ClientTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -91,6 +105,17 @@ class ClientTests(unittest.TestCase):
     def _open_database(self) -> Database:
         self.server.responses.append((200, {"success": True, "error": ""}))
         return self.client.open_database("usuarios")
+
+    def _assert_response_rejected(
+        self,
+        response: object,
+        call: Any,
+        *,
+        status: int = 200,
+    ) -> None:
+        self.server.responses.append((status, response))
+        with self.assertRaises(NoxyDBConnectionError):
+            call()
 
     def test_crud_mirrors_noxydb_api(self) -> None:
         self.server.responses.extend(
@@ -157,15 +182,17 @@ class ClientTests(unittest.TestCase):
         self.assertEqual((request["method"], request["path"], request["body"]), ("GET", "/v1/health", None))
 
     def test_health_requires_valid_success_and_status(self) -> None:
-        self.server.responses.extend(
-            [
-                (200, {"success": True, "status": "starting"}),
-                (200, {"success": False, "status": "ok"}),
-            ]
-        )
-
-        self.assertFalse(self.client.health())
-        self.assertFalse(self.client.health())
+        malformed = [
+            {"status": "ok"},
+            {"success": "yes", "status": "ok"},
+            {"success": False, "status": "ok"},
+            {"success": True},
+            {"success": True, "status": 1},
+            {"success": True, "status": "starting"},
+        ]
+        for response in malformed:
+            with self.subTest(response=response):
+                self._assert_response_rejected(response, self.client.health)
 
     def test_missing_lookup_returns_typed_empty_result(self) -> None:
         self.server.responses.extend(
@@ -329,46 +356,111 @@ class ClientTests(unittest.TestCase):
                 self.assertEqual(raised.exception.status, 200)
                 self.assertEqual(str(raised.exception), f"{operation} failed")
 
+    def test_put_returns_typed_failure_result(self) -> None:
+        db = Database(self.client, "usuarios")
+        self.server.responses.append(
+            (200, {"success": False, "error": "put failed"})
+        )
+
+        self.assertEqual(db.put("key", {}), PutResult(False, "put failed"))
+
     def test_malformed_success_responses_raise_connection_error(self) -> None:
-        malformed_responses = [
+        common_malformed = [
             b"not-json",
             ["not", "an", "object"],
+            {"error": ""},
             {"success": "yes", "error": ""},
+            {"success": True},
             {"success": True, "error": 5},
+            {"success": True, "error": "unexpected"},
+            {"success": False},
+            {"success": False, "error": 5},
         ]
-        for response in malformed_responses:
-            with self.subTest(response=response):
-                self.server.requests.clear()
-                self.server.responses.clear()
-                self.server.responses.append((200, response))
-                if response in (b"not-json", ["not", "an", "object"]):
-                    call = self.client.open_database
-                else:
-                    db = Database(self.client, "usuarios")
-                    self.server.responses[0] = (200, response)
-                    call = lambda _name: db.put("key", {})
-                with self.assertRaises(NoxyDBConnectionError):
-                    call("usuarios")
+        for response in common_malformed:
+            with self.subTest(operation="put", response=response):
+                db = Database(self.client, "usuarios")
+                self._assert_response_rejected(response, lambda: db.put("key", {}))
+
+        operation_cases = [
+            ("open", lambda: self.client.open_database("usuarios")),
+            ("remove", lambda: Database(self.client, "usuarios").remove("key")),
+            ("close", lambda: Database(self.client, "usuarios").close()),
+        ]
+        for operation, call in operation_cases:
+            with self.subTest(operation=operation):
+                self._assert_response_rejected(
+                    {"success": True, "error": "unexpected"},
+                    call,
+                )
 
     def test_malformed_lookup_value_raises_connection_error(self) -> None:
-        self.server.responses.extend(
-            [
-                (200, {"success": True, "error": ""}),
-                (200, {"found": False, "value": None, "error": ""}),
-            ]
-        )
-        db = self.client.open_database("usuarios")
+        malformed = [
+            {"value": {}, "error": ""},
+            {"found": "yes", "value": {}, "error": ""},
+            {"found": False, "error": ""},
+            {"found": False, "value": None, "error": ""},
+            {"found": False, "value": {}},
+            {"found": False, "value": {}, "error": 1},
+            {"found": False, "value": {}, "error": "unexpected"},
+        ]
+        for response in malformed:
+            with self.subTest(response=response):
+                db = Database(self.client, "usuarios")
+                self._assert_response_rejected(response, lambda: db.get("missing"))
 
-        with self.assertRaisesRegex(NoxyDBConnectionError, "invalid server response: value"):
-            db.get("missing")
+    def test_malformed_exists_envelopes_raise_connection_error(self) -> None:
+        malformed = [
+            {"error": ""},
+            {"exists": "yes", "error": ""},
+            {"exists": False},
+            {"exists": False, "error": 1},
+            {"exists": False, "error": "unexpected"},
+        ]
+        for response in malformed:
+            with self.subTest(response=response):
+                db = Database(self.client, "usuarios")
+                self._assert_response_rejected(response, lambda: db.exists("key"))
 
     def test_malformed_error_response_raises_connection_error(self) -> None:
-        for response in (b"not-json", {"success": False}, ["not", "an", "object"]):
+        malformed = [
+            b"not-json",
+            ["not", "an", "object"],
+            {"error": "failed"},
+            {"success": "no", "error": "failed"},
+            {"success": 0, "error": "failed"},
+            {"success": True, "error": "failed"},
+            {"success": False},
+            {"success": False, "error": 1},
+            {"success": False, "error": ""},
+        ]
+        for response in malformed:
             with self.subTest(response=response):
-                self.server.responses.clear()
-                self.server.responses.append((500, response))
-                with self.assertRaisesRegex(NoxyDBConnectionError, "invalid error response"):
-                    self.client._request("/v1/open", {"database": "usuarios"})
+                self._assert_response_rejected(
+                    response,
+                    lambda: self.client._request("/v1/open", {"database": "usuarios"}),
+                    status=500,
+                )
+
+    def test_http_error_body_read_failures_are_wrapped(self) -> None:
+        for read_error in (
+            TimeoutError("timed out"),
+            socket.timeout("socket timed out"),
+            OSError("read failed"),
+        ):
+            with self.subTest(read_error=read_error):
+                http_error = urllib.error.HTTPError(
+                    "http://127.0.0.1/v1/health",
+                    500,
+                    "Internal Server Error",
+                    {},
+                    _FailingErrorBody(read_error),
+                )
+                with patch(
+                    "noxydb.client.urllib.request.urlopen",
+                    side_effect=http_error,
+                ):
+                    with self.assertRaises(NoxyDBConnectionError):
+                        self.client.health()
 
     def test_connection_failure_is_wrapped(self) -> None:
         unavailable = ThreadingHTTPServer(("127.0.0.1", 0), BaseHTTPRequestHandler)

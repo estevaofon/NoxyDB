@@ -63,6 +63,19 @@ def _require_string(response: dict[str, Any], field: str) -> str:
     return value
 
 
+def _require_empty_error(response: dict[str, Any]) -> None:
+    if _require_string(response, "error") != "":
+        raise NoxyDBConnectionError("invalid server response: error")
+
+
+def _require_operation_result(response: dict[str, Any]) -> tuple[bool, str]:
+    success = _require_bool(response, "success")
+    error = _require_string(response, "error")
+    if success and error != "":
+        raise NoxyDBConnectionError("invalid server response: error")
+    return success, error
+
+
 def _reject_json_constant(value: str) -> object:
     raise json.JSONDecodeError("invalid JSON constant", value, 0)
 
@@ -74,14 +87,19 @@ class NoxyDBClient:
 
     def health(self) -> bool:
         response = self._request("/v1/health", method="GET")
-        return _require_bool(response, "success") and response.get("status") == "ok"
+        success = _require_bool(response, "success")
+        status = _require_string(response, "status")
+        if not success or status != "ok":
+            raise NoxyDBConnectionError("invalid server response")
+        return True
 
     def open_database(self, name: str) -> "Database":
         if not isinstance(name, str) or _DATABASE_NAME.fullmatch(name) is None:
             raise NoxyDBValidationError("invalid database name")
         response = self._request("/v1/open", {"database": name})
-        if not _require_bool(response, "success"):
-            raise NoxyDBServerError(200, _require_string(response, "error"))
+        success, error = _require_operation_result(response)
+        if not success:
+            raise NoxyDBServerError(200, error)
         return Database(self, name)
 
     def _request(
@@ -120,9 +138,17 @@ class NoxyDBClient:
                 UnicodeDecodeError,
                 json.JSONDecodeError,
                 http.client.IncompleteRead,
+                TimeoutError,
+                socket.timeout,
+                OSError,
             ) as decode_error:
                 raise NoxyDBConnectionError("invalid error response") from decode_error
-            if not isinstance(decoded_error, dict) or not isinstance(decoded_error.get("error"), str):
+            if (
+                not isinstance(decoded_error, dict)
+                or decoded_error.get("success") is not False
+                or not isinstance(decoded_error.get("error"), str)
+                or decoded_error["error"] == ""
+            ):
                 raise NoxyDBConnectionError("invalid error response") from error
             raise NoxyDBServerError(error.code, decoded_error["error"]) from error
         except (
@@ -168,7 +194,8 @@ class Database:
         response = self._client._request(
             "/v1/put", {"database": self.name, "key": key, "value": value}
         )
-        return PutResult(_require_bool(response, "success"), _require_string(response, "error"))
+        success, error = _require_operation_result(response)
+        return PutResult(success, error)
 
     def get(self, key: str) -> LookupResult:
         self._ensure_open()
@@ -178,27 +205,32 @@ class Database:
         value = response.get("value")
         if not isinstance(value, dict):
             raise NoxyDBConnectionError("invalid server response: value")
+        _require_empty_error(response)
         return LookupResult(found, value)
 
     def exists(self, key: str) -> bool:
         self._ensure_open()
         self._require_key(key)
         response = self._client._request("/v1/exists", {"database": self.name, "key": key})
-        return _require_bool(response, "exists")
+        exists = _require_bool(response, "exists")
+        _require_empty_error(response)
+        return exists
 
     def remove(self, key: str) -> None:
         self._ensure_open()
         self._require_key(key)
         response = self._client._request("/v1/remove", {"database": self.name, "key": key})
-        if not _require_bool(response, "success"):
-            raise NoxyDBServerError(200, _require_string(response, "error"))
+        success, error = _require_operation_result(response)
+        if not success:
+            raise NoxyDBServerError(200, error)
 
     def close_database(self) -> None:
         if not self._open:
             return
         response = self._client._request("/v1/close", {"database": self.name})
-        if not _require_bool(response, "success"):
-            raise NoxyDBServerError(200, _require_string(response, "error"))
+        success, error = _require_operation_result(response)
+        if not success:
+            raise NoxyDBServerError(200, error)
         self._open = False
 
     def close(self) -> None:
