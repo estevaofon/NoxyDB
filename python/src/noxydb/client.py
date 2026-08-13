@@ -71,7 +71,7 @@ def _require_empty_error(response: dict[str, Any]) -> None:
 def _require_operation_result(response: dict[str, Any]) -> tuple[bool, str]:
     success = _require_bool(response, "success")
     error = _require_string(response, "error")
-    if success and error != "":
+    if success == (error != ""):
         raise NoxyDBConnectionError("invalid server response: error")
     return success, error
 
@@ -204,6 +204,8 @@ class Database:
         found = _require_bool(response, "found")
         value = response.get("value")
         if not isinstance(value, dict):
+            raise NoxyDBConnectionError("invalid server response: value")
+        if not found and value != {}:
             raise NoxyDBConnectionError("invalid server response: value")
         _require_empty_error(response)
         return LookupResult(found, value)

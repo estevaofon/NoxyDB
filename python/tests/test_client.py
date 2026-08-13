@@ -364,6 +364,20 @@ class ClientTests(unittest.TestCase):
 
         self.assertEqual(db.put("key", {}), PutResult(False, "put failed"))
 
+    def test_operation_failure_requires_non_empty_error(self) -> None:
+        operation_cases = [
+            ("put", lambda: Database(self.client, "usuarios").put("key", {})),
+            ("open", lambda: self.client.open_database("usuarios")),
+            ("remove", lambda: Database(self.client, "usuarios").remove("key")),
+            ("close", lambda: Database(self.client, "usuarios").close()),
+        ]
+        for operation, call in operation_cases:
+            with self.subTest(operation=operation):
+                self._assert_response_rejected(
+                    {"success": False, "error": ""},
+                    call,
+                )
+
     def test_malformed_success_responses_raise_connection_error(self) -> None:
         common_malformed = [
             b"not-json",
@@ -407,6 +421,21 @@ class ClientTests(unittest.TestCase):
             with self.subTest(response=response):
                 db = Database(self.client, "usuarios")
                 self._assert_response_rejected(response, lambda: db.get("missing"))
+
+    def test_missing_lookup_requires_empty_value_object(self) -> None:
+        db = Database(self.client, "usuarios")
+        self._assert_response_rejected(
+            {"found": False, "value": {"ghost": 1}, "error": ""},
+            lambda: db.get("missing"),
+        )
+
+    def test_found_lookup_accepts_empty_value_object(self) -> None:
+        db = Database(self.client, "usuarios")
+        self.server.responses.append(
+            (200, {"found": True, "value": {}, "error": ""})
+        )
+
+        self.assertEqual(db.get("present"), LookupResult(True, {}))
 
     def test_malformed_exists_envelopes_raise_connection_error(self) -> None:
         malformed = [
