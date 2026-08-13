@@ -1,4 +1,5 @@
 use net
+use json
 use strings
 use time
 use server.protocol as protocol
@@ -32,6 +33,15 @@ end
 
 func invalid_request(error: string) -> HttpReadResult
     return http_result(true, false, "", "", b"", 0, error)
+end
+
+func invalid_parsed_request(method: string, path: string, body: bytes, expected_bytes: int, error: string) -> HttpReadResult
+    return http_result(true, false, method, path, body, expected_bytes, error)
+end
+
+func invalid_partial_request(request: HttpReadResult, error: string) -> HttpReadResult
+    if request.method == "" && request.path == "" then return invalid_request(error) end
+    return invalid_parsed_request(request.method, request.path, request.body, request.expected_bytes, error)
 end
 
 func find_header_end(buffer: bytes) -> int
@@ -70,6 +80,8 @@ func assemble_request(buffer: bytes) -> HttpReadResult
 
     let request_parts: strings.SplitResult = strings.split(lines.parts[0], " ")
     if request_parts.count != 3 then return invalid_request("invalid request line") end
+    let method: string = request_parts.parts[0]
+    let path: string = request_parts.parts[1]
 
     let content_length_count: int = 0
     let content_length: int = 0
@@ -77,37 +89,41 @@ func assemble_request(buffer: bytes) -> HttpReadResult
     while line_index < lines.count do
         let line: string = lines.parts[line_index]
         let colon: int = strings.index_of(line, ":")
-        if colon <= 0 then return invalid_request("invalid header") end
+        if colon <= 0 then return invalid_parsed_request(method, path, b"", 0, "invalid header") end
         let name: string = strings.to_lower(strings.trim(strings.substring(line, 0, colon)))
         if name == "content-length" then
             content_length_count = content_length_count + 1
-            if content_length_count > 1 then return invalid_request("duplicate Content-Length") end
+            if content_length_count > 1 then return invalid_parsed_request(method, path, b"", 0, "duplicate Content-Length") end
             let value: string = strings.trim(strings.substring(line, colon + 1, length(line)))
-            if !decimal_length(value) then return invalid_request("invalid Content-Length") end
+            if !decimal_length(value) then return invalid_parsed_request(method, path, b"", 0, "invalid Content-Length") end
             let first_significant: int = 0
             while first_significant < length(value) && strings.char_at(value, first_significant) == "0" do
                 first_significant = first_significant + 1
             end
             let normalized: string = "0"
             if first_significant < length(value) then normalized = strings.substring(value, first_significant, length(value)) end
-            if length(normalized) > 7 then return invalid_request("request too large") end
+            if length(normalized) > 7 then return invalid_parsed_request(method, path, b"", 0, "request too large") end
             content_length = to_int(normalized)
-            if content_length > MAX_REQUEST_BYTES then return invalid_request("request too large") end
+            if content_length > MAX_REQUEST_BYTES then return invalid_parsed_request(method, path, b"", 0, "request too large") end
         end
         line_index = line_index + 1
     end
 
     let body_start: int = header_end + 4
     let expected_bytes: int = body_start + content_length
-    if expected_bytes > MAX_REQUEST_BYTES then return invalid_request("request too large") end
+    if expected_bytes > MAX_REQUEST_BYTES then return invalid_parsed_request(method, path, b"", expected_bytes, "request too large") end
     if length(buffer) < expected_bytes then
-        return http_result(false, true, request_parts.parts[0], request_parts.parts[1], b"", expected_bytes, "")
+        return http_result(false, true, method, path, b"", expected_bytes, "")
     end
-    if length(buffer) > expected_bytes then return invalid_request("surplus request body") end
+    if length(buffer) > expected_bytes then
+        let declared_body: bytes = b""
+        if content_length > 0 then declared_body = slice(buffer, body_start, expected_bytes) end
+        return invalid_parsed_request(method, path, declared_body, expected_bytes, "surplus request body")
+    end
 
     let body: bytes = b""
     if content_length > 0 then body = slice(buffer, body_start, expected_bytes) end
-    return http_result(true, true, request_parts.parts[0], request_parts.parts[1], body, expected_bytes, "")
+    return http_result(true, true, method, path, body, expected_bytes, "")
 end
 
 func operation_for(method: string, path: string) -> string
@@ -118,6 +134,41 @@ func operation_for(method: string, path: string) -> string
     if method == "POST" && path == "/v1/remove" then return "remove" end
     if method == "POST" && path == "/v1/close" then return "close" end
     return ""
+end
+
+func quoted_log_value(value: string) -> string
+    let encoded: json.EncodeResult = json.dumps_result(value)
+    if encoded.success then return encoded.data end
+    return "\"<invalid>\""
+end
+
+func escaped_log_field(value: string) -> string
+    let encoded: json.EncodeResult = json.dumps_result(value)
+    if !encoded.success || length(encoded.data) < 2 then return "<invalid>" end
+    return strings.substring(encoded.data, 1, length(encoded.data) - 2)
+end
+
+func build_activity_line(request: HttpReadResult, status: int, duration_ms: int, timestamp: string) -> string
+    let method: string = request.method
+    let path: string = request.path
+    if method == "" then method = "UNKNOWN" end
+    if path == "" then path = "-" end
+
+    let line: string = timestamp + " " + escaped_log_field(method) + " " + escaped_log_field(path)
+    let operation: string = operation_for(request.method, request.path)
+    if operation != "" then
+        let decoded: protocol.ApiRequest = protocol.decode_api_request(operation, request.body)
+        if decoded.valid then
+            line = line + " database=" + decoded.database
+            if operation == "put" || operation == "get" || operation == "exists" || operation == "remove" then
+                line = line + " key=" + quoted_log_value(decoded.key)
+            end
+        end
+    end
+
+    let elapsed_ms: int = duration_ms
+    if elapsed_ms < 0 then elapsed_ms = 0 end
+    return line + " status=" + to_str(status) + " duration_ms=" + to_str(elapsed_ms)
 end
 
 func route_request(request: HttpReadResult, commands: chan any) -> protocol.ApiResponse
@@ -197,6 +248,7 @@ end
 func read_http_request(client: net.Socket, network_io: chan any) -> HttpReadResult
     let buffer: bytes = b""
     let expected_bytes: int = 0
+    let partial_request: HttpReadResult = http_result(false, true, "", "", b"", 0, "")
     let started_at: int = time.now_ms()
     let idle_deadline: int = started_at + REQUEST_READ_IDLE_TIMEOUT_MS
     let absolute_deadline: int = started_at + REQUEST_READ_IDLE_TIMEOUT_MS + MAX_REQUEST_BYTES / REQUEST_BODY_BYTES_PER_TIMEOUT_MS
@@ -204,19 +256,22 @@ func read_http_request(client: net.Socket, network_io: chan any) -> HttpReadResu
         let poll_deadline: int = idle_deadline
         if absolute_deadline < poll_deadline then poll_deadline = absolute_deadline end
         let remaining_ms: int = poll_deadline - time.now_ms()
-        if remaining_ms <= 0 then return invalid_request("request read timeout") end
+        if remaining_ms <= 0 then return invalid_partial_request(partial_request, "request read timeout") end
         let poll_timeout_ms: int = remaining_ms
         if poll_timeout_ms > READ_POLL_SLICE_MS then poll_timeout_ms = READ_POLL_SLICE_MS end
         let polled: PollReceiveResult = poll_receive(client, poll_timeout_ms, network_io)
         if polled.ready then
-            if !polled.ok then return invalid_request("failed to read request") end
-            if polled.count == 0 then return invalid_request("incomplete request") end
+            if !polled.ok then return invalid_partial_request(partial_request, "failed to read request") end
+            if polled.count == 0 then return invalid_partial_request(partial_request, "incomplete request") end
             buffer = buffer + slice(polled.data, 0, polled.count)
             idle_deadline = time.now_ms() + REQUEST_READ_IDLE_TIMEOUT_MS
 
             let request: HttpReadResult = assemble_request(buffer)
+            partial_request = request
             if request.complete then
-                if request.valid && has_immediate_surplus(client, network_io) then return invalid_request("surplus request body") end
+                if request.valid && has_immediate_surplus(client, network_io) then
+                    return invalid_parsed_request(request.method, request.path, request.body, request.expected_bytes, "surplus request body")
+                end
                 return request
             end
             if !request.valid then return request end
@@ -228,10 +283,11 @@ func read_http_request(client: net.Socket, network_io: chan any) -> HttpReadResu
             end
         end
     end
-    return invalid_request("failed to read request")
+    return invalid_partial_request(partial_request, "failed to read request")
 end
 
 func handle_client(client: net.Socket, commands: chan any, network_io: chan any) -> void
+    let started_at: int = time.now_ms()
     let request: HttpReadResult = read_http_request(client, network_io)
     let response: protocol.ApiResponse = protocol.api_error(400, request.error)
     if request.complete && request.valid then response = route_request(request, commands) end
@@ -245,6 +301,8 @@ func handle_client(client: net.Socket, commands: chan any, network_io: chan any)
         sent_bytes = sent_bytes + sent.count
     end
     net.socket_close(client)
+    let timestamp: string = time.format_custom(time.now_datetime(), "%Y-%m-%dT%H:%M:%S")
+    print(build_activity_line(request, response.status, time.now_ms() - started_at, timestamp))
 end
 
 func run_client_handler(client: net.Socket, commands: chan any, network_io: chan any, handler: func) -> void

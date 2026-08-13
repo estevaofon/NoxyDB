@@ -20,6 +20,8 @@ assertions.assert_string(malformed_length.error, "invalid Content-Length", "leng
 
 let duplicate_length: transport.HttpReadResult = transport.assemble_request(b"POST /v1/open HTTP/1.1\r\nContent-Length: 0\r\nContent-Length: 0\r\n\r\n")
 assertions.assert_false(duplicate_length.valid, "duplicate length should be rejected")
+assertions.assert_string(duplicate_length.method, "POST", "framing errors should retain a parsed method for activity logs")
+assertions.assert_string(duplicate_length.path, "/v1/open", "framing errors should retain a parsed path for activity logs")
 
 let padded_length: transport.HttpReadResult = transport.assemble_request(b"POST /v1/open HTTP/1.1\r\nContent-Length: 000000023\r\n\r\n{\"database\":\"usuarios\"}")
 assertions.assert_true(padded_length.complete, "leading-zero length should complete numerically")
@@ -45,5 +47,10 @@ assertions.assert_true(strings.starts_with(response_text, "HTTP/1.1 200 OK\r\n")
 assertions.assert_true(strings.contains(response_text, "Content-Type: application/json\r\n"), "content type should be JSON")
 assertions.assert_true(strings.contains(response_text, "Content-Length: 16\r\n"), "content length should count bytes")
 assertions.assert_true(strings.ends_with(response_text, "\r\n\r\n{\"success\":true}"), "body should follow headers")
+
+let injected_path_request: transport.HttpReadResult = transport.http_result(true, true, "GET", "/v1/health\nforged", b"", 0, "")
+let injected_path_line: string = transport.build_activity_line(injected_path_request, 404, 1, "2026-08-13T14:32:10")
+assertions.assert_false(strings.contains(injected_path_line, "\n"), "activity fields should not inject extra log lines")
+assertions.assert_true(strings.contains(injected_path_line, "/v1/health\\nforged"), "activity fields should escape control characters")
 
 print("HTTP transport tests passed")
