@@ -1,44 +1,124 @@
 # NoxyDB
 
-NoxyDB is a lightweight, persistent key-value database written entirely in
-Noxy. Each `string` key identifies a JSON document that may contain strings,
-numbers, booleans, null values, arrays, and nested objects. Documents are stored
-in an append-only log and retrieved, replaced, or removed by key.
 
-Beyond being a database project, NoxyDB serves as a real-world systems
-programming workload designed to exercise and guide the evolution of the Noxy
-language, its virtual machine, and its standard library.
+NoxyDB is a lightweight, persistent **document key-value database** written entirely in Noxy. Each `string` key identifies a JSON document supporting strings, numbers, booleans, null values, arrays, and nested objects. Documents are persisted through an append-only storage engine and can be retrieved, replaced, or removed by key.
+
+NoxyDB is designed as both a practical database system and a real-world systems programming workload for Noxy, exercising and helping drive the evolution of the language, its virtual machine, and its standard library.
+
 
 ## Architecture
 
 ```mermaid
-flowchart LR
-    App["Noxy application"] --> API["Database API<br/>open_database · put · get<br/>remove · exists · close_database"]
+flowchart TB
 
-    API -- "PUT: map[string, any]" --> Serialize["document.nx<br/>serialize"]
-    Serialize -- "strict JSON" --> Encode["storage.nx<br/>opaque payload · hexadecimal record"]
-    API -- "REMOVE" --> Encode
-    Encode --> Write["io.write_result<br/>append before mutation"]
-    Write -- "success" --> State["Raw DatabaseState<br/>map[string, string]<br/>open · error · file_fd"]
-    Write -- "failure" --> Failed["Database closed<br/>failed to write database log"]
+    %% =========================================================
+    %% CLIENTS
+    %% =========================================================
 
-    API -- "GET: reads payload" --> State
-    State -- "serialized JSON" --> Deserialize["document.nx<br/>deserialize"]
-    Deserialize -- "fresh map[string, any]" --> API
-    API -- "EXISTS" --> State
+    subgraph Clients["Clients"]
+        NoxyApp["Noxy Application"]
+        PythonApp["Python Application"]
+    end
 
-    Write --> Log[("Append-only log<br/>P key value · D key")]
+    %% =========================================================
+    %% REMOTE ACCESS
+    %% =========================================================
 
-    Log -- "open_database" --> Read["Full read<br/>byte-count validation"]
-    Read --> Replay["Strict replay<br/>validates and applies in order"]
-    Replay --> Validate["document.deserialize<br/>final validation of every payload"]
-    Validate -- "all valid" --> AppendOpen["Opens the log for append"]
-    AppendOpen --> State
-    Validate -- "invalid" --> Invalid["Database closed<br/>invalid document payload<br/>empty raw state"]
+    subgraph Remote["Remote Access"]
+        PythonClient["Python Client<br/>NoxyDBClient"]
+        HTTP["HTTP Transport"]
+        Protocol["Protocol / Routing"]
+        Worker["Database Worker<br/>database cache"]
+    end
 
-    API -- "close_database" --> Close["io.close_result"]
-    Close -- "success" --> Closed["Database closed normally"]
-    Close -- "failure" --> CloseFailed["Database closed<br/>failed to close database log"]
+    PythonApp --> PythonClient
+    PythonClient -->|"HTTP"| HTTP
+    HTTP --> Protocol
+    Protocol --> Worker
+
+    %% =========================================================
+    %% NOXYDB CORE
+    %% =========================================================
+
+    subgraph Core["NoxyDB Core"]
+
+        API["Database API<br/><br/>open_database()<br/>put()<br/>get()<br/>remove()<br/>exists()<br/>close_database()"]
+
+        Document["document.nx<br/><br/>serialize()<br/>deserialize()<br/><br/>map[string, any]<br/>⇄ JSON string"]
+
+        State["DatabaseState<br/><br/>payloads: map[string, string]<br/>file_fd<br/>path<br/>open<br/>error"]
+
+        Storage["storage.nx<br/><br/>append_put()<br/>append_remove()<br/>replay()"]
+    end
+
+    NoxyApp --> API
+    Worker --> API
+
+    %% =========================================================
+    %% PUT FLOW
+    %% =========================================================
+
+    API -->|"PUT document"| Document
+    Document -->|"serialized JSON"| Storage
+
+    Storage -->|"append succeeds"| State
+
+    %% =========================================================
+    %% GET FLOW
+    %% =========================================================
+
+    API -->|"GET key"| State
+    State -->|"serialized JSON"| Document
+    Document -->|"fresh map[string, any]"| API
+
+    %% =========================================================
+    %% EXISTS
+    %% =========================================================
+
+    API -->|"EXISTS"| State
+
+    %% =========================================================
+    %% REMOVE
+    %% =========================================================
+
+    API -->|"REMOVE key"| Storage
+    Storage -->|"append tombstone succeeds"| State
+
+    %% =========================================================
+    %% PERSISTENCE
+    %% =========================================================
+
+    subgraph Persistence["Persistent Storage"]
+
+        Log[("Append-Only Log<br/><br/>P &lt;key_hex&gt; &lt;payload_hex&gt;<br/>D &lt;key_hex&gt;")]
+    end
+
+    Storage -->|"append P / D"| Log
+
+    %% =========================================================
+    %% DATABASE OPEN / REPLAY
+    %% =========================================================
+
+    Log -->|"open_database()"| Storage
+    Storage -->|"replay → raw payloads"| State
+    State -->|"validate payloads"| Document
+    Document -->|"valid JSON documents"| State
+
+    %% =========================================================
+    %% FAILURE PATH
+    %% =========================================================
+
+    Storage -.->|"write failure"| Failed["FAILED<br/><br/>open = false<br/>error != ''"]
+    Document -.->|"invalid persisted document"| Failed
+
+    %% =========================================================
+    %% DATABASE WORKER
+    %% =========================================================
+
+    WorkerState["map[string, Database]<br/><br/>usuarios → usuarios.db<br/>cache → cache.db<br/>sessions → sessions.db"]
+
+    Worker --> WorkerState
+    WorkerState --> API
 ```
 
 ## Usage
