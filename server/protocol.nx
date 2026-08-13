@@ -95,6 +95,9 @@ func encode_response(payload: map[string, any]) -> string
 end
 
 func api_success(payload: map[string, any]) -> ApiResponse
+    if length(keys(payload)) == 2 && has_key(payload, "success") && has_key(payload, "error") && payload["success"] == true && payload["error"] == "" then
+        return ApiResponse(200, "{\"success\":true,\"error\":\"\"}")
+    end
     return ApiResponse(200, encode_response(payload))
 end
 

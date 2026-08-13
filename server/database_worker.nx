@@ -57,7 +57,7 @@ func execute_database_command(databases: ref map[string, noxydb.Database], data_
     return protocol.api_error(404, "unknown operation")
 end
 
-func run_database_worker(commands: chan any, data_dir: string) -> void
+func run_database_worker(commands: chan any, data_dir: string, execute: func, close_all: func) -> void
     let databases: map[string, noxydb.Database]
     let running: bool = true
     while running do
@@ -66,11 +66,11 @@ func run_database_worker(commands: chan any, data_dir: string) -> void
             running = false
         else
             let command: DatabaseCommand = raw
-            let response: protocol.ApiResponse = execute_database_command(ref databases, data_dir, command)
+            let response: protocol.ApiResponse = execute(ref databases, data_dir, command)
             chan_send(command.response, response)
         end
     end
-    close_all_databases(ref databases)
+    close_all(ref databases)
 end
 
 func close_all_databases(databases: ref map[string, noxydb.Database]) -> void

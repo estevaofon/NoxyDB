@@ -73,7 +73,7 @@ elif !io.mkdir(options.data_dir) then
 end
 
 let commands: chan any = make_chan(64)
-spawn(worker.run_database_worker, commands, options.data_dir)
+spawn(worker.run_database_worker, commands, options.data_dir, worker.execute_database_command, worker.close_all_databases)
 print("NoxyDB server listening on http://127.0.0.1:" + to_str(options.port))
 transport.serve_local(options.port, commands)
 chan_close(commands)

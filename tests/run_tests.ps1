@@ -6,6 +6,15 @@ param(
 $ErrorActionPreference = "Stop"
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $noxyExe = $env:NOXY_EXE
+$pythonPath = Join-Path $projectRoot "python\src"
+
+if ($Group -eq "python") {
+    $env:PYTHONPATH = $pythonPath
+    & python -m unittest discover -s (Join-Path $projectRoot "python\tests") -p "test_client.py" -v
+    if ($LASTEXITCODE -ne 0) { throw "Python client tests failed" }
+    Write-Output "All Python client tests passed."
+    exit 0
+}
 
 if ([string]::IsNullOrWhiteSpace($noxyExe)) {
     throw "Set NOXY_EXE to a Noxy executable that includes io.write_result and io.close_result"
@@ -13,6 +22,14 @@ if ([string]::IsNullOrWhiteSpace($noxyExe)) {
 
 if (-not (Test-Path -LiteralPath $noxyExe -PathType Leaf)) {
     throw "Noxy executable not found: $noxyExe"
+}
+
+if ($Group -eq "integration") {
+    $env:PYTHONPATH = $pythonPath
+    & python -m unittest discover -s (Join-Path $projectRoot "python\tests") -p "test_integration.py" -v
+    if ($LASTEXITCODE -ne 0) { throw "NoxyDB integration tests failed" }
+    Write-Output "All NoxyDB integration tests passed."
+    exit 0
 }
 
 $coreTests = @(
@@ -68,6 +85,12 @@ try {
     }
 } finally {
     Pop-Location
+}
+
+if ([string]::IsNullOrWhiteSpace($Test) -and [string]::IsNullOrWhiteSpace($Group)) {
+    $env:PYTHONPATH = $pythonPath
+    & python -m unittest discover -s (Join-Path $projectRoot "python\tests") -p "test_client.py" -v
+    if ($LASTEXITCODE -ne 0) { throw "Python client tests failed" }
 }
 
 Write-Output "All NoxyDB tests passed ($($tests.Count) files)."

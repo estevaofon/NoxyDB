@@ -178,6 +178,10 @@ func handle_client(client: net.Socket, commands: chan any) -> void
     net.socket_close(client)
 end
 
+func run_client_handler(client: net.Socket, commands: chan any, handler: func) -> void
+    handler(client, commands)
+end
+
 func serve_local(port: int, commands: chan any) -> void
     let listener: net.Socket = net.listen("127.0.0.1", port)
     if !listener.open then
@@ -187,7 +191,7 @@ func serve_local(port: int, commands: chan any) -> void
     while true do
         let client: net.Socket = net.accept(listener)
         if client.open then
-            spawn(handle_client, client, commands)
+            spawn(run_client_handler, client, commands, handle_client)
         end
     end
     net.socket_close(listener)

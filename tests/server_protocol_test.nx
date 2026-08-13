@@ -36,4 +36,7 @@ assertions.assert_int(response.status, 409, "status should be retained")
 assertions.assert_true(strings.contains(response.json, "\"success\":false"), "error JSON should expose success")
 assertions.assert_true(strings.contains(response.json, "\"error\":\"database is not open\""), "error JSON should expose message")
 
+let operation_success: protocol.ApiResponse = protocol.api_success({"success": true, "error": ""})
+assertions.assert_true(strings.starts_with(operation_success.json, "{\"success\":true"), "operation success JSON should start with success")
+
 print("server protocol tests passed")

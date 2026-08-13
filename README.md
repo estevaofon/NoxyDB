@@ -68,6 +68,40 @@ end
 noxydb.close_database(db)
 ```
 
+## NoxyDB Server
+
+```powershell
+# Start a persistent local server, even when no database exists yet
+& "D:\path\to\noxy.exe" server\noxydb_server.nx --data-dir .\data --port 8765
+
+# Install the Python client during development
+python -m pip install -e .\python
+```
+
+```python
+from noxydb import NoxyDBClient
+
+client = NoxyDBClient("http://127.0.0.1:8765")
+db = client.open_database("usuarios")
+db.put("user:1", {"name": "Estevão", "active": True})
+
+result = db.get("user:1")
+if result.found:
+    print(result.value["name"])
+
+db.remove("user:1")
+db.close()
+```
+
+The server creates `data/usuarios.db` the first time `usuarios` is opened and
+remains running when no clients are connected. A single server manages multiple
+database names, with one isolated `.db` file per name. NoxyDB maps keys directly
+to documents; it has no tables or collections.
+
+The server accepts connections only on `127.0.0.1`. It has no authentication
+because it is local-only. Do not share a database's `.db` file with another
+NoxyDB process concurrently.
+
 ## Executable example
 
 The complete walkthrough in `examples/documents.nx` demonstrates nested
@@ -144,5 +178,5 @@ failures are explicit. Persistence is guaranteed after close_database()
 completes successfully; crash durability and fsync are not provided.
 
 Queries, JSON Path, partial updates, indexes, schemas, collections, filters,
-compaction, TTL, networking, concurrency, transactions, replication, and
-sharding remain out of scope.
+compaction, TTL, remote networking, transactions, replication, and sharding
+remain out of scope.
