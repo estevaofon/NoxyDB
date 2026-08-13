@@ -21,6 +21,10 @@ assertions.assert_string(malformed_length.error, "invalid Content-Length", "leng
 let duplicate_length: transport.HttpReadResult = transport.assemble_request(b"POST /v1/open HTTP/1.1\r\nContent-Length: 0\r\nContent-Length: 0\r\n\r\n")
 assertions.assert_false(duplicate_length.valid, "duplicate length should be rejected")
 
+assertions.assert_int(transport.next_receive_size(0), 65536, "initial receive should use one chunk")
+assertions.assert_int(transport.next_receive_size(1048575), 1, "receive should be limited to remaining request bytes")
+assertions.assert_int(transport.next_receive_size(1048576), 0, "receive should stop at the request byte limit")
+
 let response: bytes = transport.build_http_response(protocol.ApiResponse(200, "{\"success\":true}"))
 let response_text: string = to_str(response)
 assertions.assert_true(strings.starts_with(response_text, "HTTP/1.1 200 OK\r\n"), "status line should be correct")

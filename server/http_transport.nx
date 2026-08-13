@@ -139,10 +139,19 @@ func build_http_response(response: protocol.ApiResponse) -> bytes
     return to_bytes(headers) + body
 end
 
+func next_receive_size(buffered_bytes: int) -> int
+    let remaining: int = MAX_REQUEST_BYTES - buffered_bytes
+    if remaining <= 0 then return 0 end
+    if remaining < 65536 then return remaining end
+    return 65536
+end
+
 func read_http_request(client: net.Socket) -> HttpReadResult
     let buffer: bytes = b""
     while true do
-        let received: net.NetResult = net.socket_recv(client, 65536)
+        let receive_size: int = next_receive_size(length(buffer))
+        if receive_size == 0 then return invalid_request("request too large") end
+        let received: net.NetResult = net.socket_recv(client, receive_size)
         if !received.ok then return invalid_request("failed to read request") end
         if received.count == 0 then return invalid_request("incomplete request") end
         buffer = buffer + slice(received.data, 0, received.count)
