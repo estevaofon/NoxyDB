@@ -98,6 +98,17 @@ remains running when no clients are connected. A single server manages multiple
 database names, with one isolated `.db` file per name. NoxyDB maps keys directly
 to documents; it has no tables or collections.
 
+Each completed request is printed to the server console with its local timestamp,
+HTTP method and route, database name, key when applicable, response status, and
+duration. Keys are JSON-escaped so they cannot inject extra log lines. Document
+contents are never logged:
+
+```text
+2026-08-13T14:32:10 POST /v1/open database=usuarios status=200 duration_ms=1
+2026-08-13T14:32:11 POST /v1/put database=usuarios key="user:1" status=200 duration_ms=2
+2026-08-13T14:32:11 POST /v1/get database=usuarios key="user:1" status=200 duration_ms=0
+```
+
 The server accepts connections only on `127.0.0.1`. It has no authentication
 because it is local-only. Do not share a database's `.db` file with another
 NoxyDB process concurrently.

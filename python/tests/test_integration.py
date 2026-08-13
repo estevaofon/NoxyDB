@@ -1,7 +1,9 @@
 import os
+import re
 import socket
 import subprocess
 import tempfile
+import threading
 import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
@@ -219,6 +221,137 @@ class IntegrationTests(unittest.TestCase):
             self.client.open_database("broken")
         self.assertEqual(raised.exception.status, 500)
         self.assertNotIn(str(self.data_dir), str(raised.exception))
+
+    def test_server_prints_safe_activity_lines(self) -> None:
+        with tempfile.TemporaryDirectory() as activity_data_dir:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as reservation:
+                reservation.bind(("127.0.0.1", 0))
+                activity_port = reservation.getsockname()[1]
+
+            process = subprocess.Popen(
+                [
+                    self.noxy_exe,
+                    "server/noxydb_server.nx",
+                    "--data-dir",
+                    activity_data_dir,
+                    "--port",
+                    str(activity_port),
+                ],
+                cwd=self.project_root,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+            )
+            self.assertIsNotNone(process.stdout)
+            captured_lines: list[str] = []
+
+            def capture_output() -> None:
+                assert process.stdout is not None
+                for raw_line in process.stdout:
+                    captured_lines.append(raw_line.decode("utf-8", errors="replace").rstrip())
+
+            output_thread = threading.Thread(target=capture_output, daemon=True)
+            output_thread.start()
+
+            def wait_for_activity(expected: str) -> None:
+                deadline = time.monotonic() + 2
+                while time.monotonic() < deadline:
+                    if any(expected in line for line in captured_lines):
+                        return
+                    if process.poll() is not None:
+                        break
+                    time.sleep(0.01)
+                self.fail("\n".join(captured_lines))
+
+            activity_client = NoxyDBClient(f"http://127.0.0.1:{activity_port}")
+            try:
+                deadline = time.monotonic() + 5
+                while True:
+                    try:
+                        if activity_client.health():
+                            break
+                    except Exception:
+                        if process.poll() is not None or time.monotonic() >= deadline:
+                            raise
+                        time.sleep(0.05)
+
+                wait_for_activity("GET /v1/health status=200")
+                database = activity_client.open_database("activity")
+                wait_for_activity("POST /v1/open database=activity status=200")
+                database.put("line\nbreak", {"password": "must-not-be-logged"})
+                wait_for_activity(
+                    'POST /v1/put database=activity key="line\\nbreak" status=200'
+                )
+                database.get("line\nbreak")
+                wait_for_activity(
+                    'POST /v1/get database=activity key="line\\nbreak" status=200'
+                )
+                database.exists("line\nbreak")
+                wait_for_activity(
+                    'POST /v1/exists database=activity key="line\\nbreak" status=200'
+                )
+                database.remove("line\nbreak")
+                wait_for_activity(
+                    'POST /v1/remove database=activity key="line\\nbreak" status=200'
+                )
+                database.close()
+                wait_for_activity("POST /v1/close database=activity status=200")
+
+                with socket.create_connection(
+                    ("127.0.0.1", activity_port), timeout=5
+                ) as connection:
+                    connection.sendall(
+                        b"POST /v1/open HTTP/1.1\r\n"
+                        b"Content-Length: 0\r\nContent-Length: 0\r\n\r\n"
+                    )
+                    connection.shutdown(socket.SHUT_WR)
+                    while connection.recv(65536):
+                        pass
+                wait_for_activity("POST /v1/open status=400")
+
+                with socket.create_connection(
+                    ("127.0.0.1", activity_port), timeout=5
+                ) as connection:
+                    connection.sendall(
+                        b"POST /v1/put HTTP/1.1\r\nContent-Length: 100\r\n\r\n{}"
+                    )
+                    connection.shutdown(socket.SHUT_WR)
+                    while connection.recv(65536):
+                        pass
+                wait_for_activity("POST /v1/put status=400")
+            finally:
+                process.terminate()
+                process.wait(timeout=5)
+                output_thread.join(timeout=2)
+                if process.stdout is not None:
+                    process.stdout.close()
+
+        output = "\n".join(captured_lines)
+        activity_lines = [
+            line for line in output.splitlines() if "duration_ms=" in line
+        ]
+        timestamped_line = re.compile(
+            r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2} .+ "
+            r"status=\d{3} duration_ms=\d+"
+        )
+        self.assertTrue(all(timestamped_line.fullmatch(line) for line in activity_lines))
+
+        expected_activities = (
+            "GET /v1/health status=200",
+            "POST /v1/open database=activity status=200",
+            'POST /v1/put database=activity key="line\\nbreak" status=200',
+            'POST /v1/get database=activity key="line\\nbreak" status=200',
+            'POST /v1/exists database=activity key="line\\nbreak" status=200',
+            'POST /v1/remove database=activity key="line\\nbreak" status=200',
+            "POST /v1/close database=activity status=200",
+            "POST /v1/open status=400",
+            "POST /v1/put status=400",
+        )
+        for expected in expected_activities:
+            self.assertEqual(
+                sum(expected in line for line in activity_lines), 1, output
+            )
+
+        self.assertNotIn("must-not-be-logged", output)
 
 
 if __name__ == "__main__":
