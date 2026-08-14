@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.1] - 2026-08-14
+
+### Changed
+
+- Streamlined the README around project onboarding, quickstarts, examples, and
+  essential operational guidance, with implementation details linked from the
+  existing deep-dive document. `#docs` @estevaofon
+
 ## [0.2.0] - 2026-08-12
 
 ### Added
