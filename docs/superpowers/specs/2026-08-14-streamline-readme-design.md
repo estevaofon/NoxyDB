@@ -22,8 +22,8 @@ The README will contain, in this order:
 2. A small architecture diagram showing embedded and client/server usage.
 3. An embedded Noxy quickstart.
 4. A local-server and Python-client quickstart.
-5. Links to executable examples and the detailed architecture document.
-6. A concise API reference and operational limitations.
+5. A concise API reference and operational limitations.
+6. Links to executable examples and the detailed architecture document.
 7. Commands for running the test suites.
 
 ## Content removed or relocated

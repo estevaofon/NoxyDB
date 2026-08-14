@@ -61,14 +61,19 @@ $env:NOXY_EXE = "D:\path\to\noxy.exe"
 
 ## Quick start: local server and Python
 
-Start the server and install the Python client in editable mode:
+Install the Python client in editable mode:
 
 ```powershell
-& "D:\path\to\noxy.exe" server/noxydb_server.nx --data-dir ./data --port 8765
 python -m pip install -e ./python
 ```
 
-In another terminal, connect to the server:
+Then start the server:
+
+```powershell
+& "D:\path\to\noxy.exe" server/noxydb_server.nx --data-dir ./data --port 8765
+```
+
+In another terminal, connect with Python:
 
 ```python
 from noxydb import NoxyDBClient
