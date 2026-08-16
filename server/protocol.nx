@@ -31,7 +31,7 @@ struct PutBody
 end
 
 func invalid_request(operation: string, error: string) -> ApiRequest
-    let empty: map[string, any]
+    let empty: map[string, any] = {}
     return ApiRequest(false, operation, "", "", empty, error)
 end
 
@@ -57,6 +57,7 @@ end
 
 func decode_api_request(operation: string, body: bytes) -> ApiRequest
     let raw: map[string, any] = {}
+    if !strings.is_valid_utf8(body) then return invalid_request(operation, "invalid JSON request") end
     let body_string: string = to_str(body)
     if !json_loads(body_string, raw) then return invalid_request(operation, "invalid JSON request") end
     let expected: int = expected_field_count(operation)

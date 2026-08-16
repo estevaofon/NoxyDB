@@ -39,4 +39,9 @@ assertions.assert_true(strings.contains(response.json, "\"error\":\"database is 
 let operation_success: protocol.ApiResponse = protocol.api_success({"success": true, "error": ""})
 assertions.assert_true(strings.starts_with(operation_success.json, "{\"success\":true"), "operation success JSON should start with success")
 
+let non_utf8_body: bytes = hex_decode("7b226461746162617365223a22ff227d")
+let non_utf8: protocol.ApiRequest = protocol.decode_api_request("open", non_utf8_body)
+assertions.assert_false(non_utf8.valid, "corpo nao-UTF-8 deve ser invalido")
+assertions.assert_string(non_utf8.error, "invalid JSON request", "corpo nao-UTF-8 deve ser classificado")
+
 print("server protocol tests passed")
