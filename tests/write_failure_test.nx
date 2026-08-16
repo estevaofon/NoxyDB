@@ -2,7 +2,7 @@ use io
 use noxydb
 use tests.assertions as assertions
 
-func close_underlying_file(db: noxydb.Database) -> void
+func close_underlying_file(db: ref noxydb.Database) -> void
     let file: io.File = io.File(db.state.file_fd, db.state.path, "a", true)
     io.close(file)
 end
