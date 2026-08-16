@@ -59,7 +59,8 @@ $errorTests = @(
 $serverTests = @(
     "server_protocol_test.nx",
     "database_worker_test.nx",
-    "worker_supervision_test.nx"
+    "worker_supervision_test.nx",
+    "api_test.nx"
 )
 
 $tests = if (-not [string]::IsNullOrWhiteSpace($Test)) {

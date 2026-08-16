@@ -1,0 +1,25 @@
+use server.api as api
+use tests.assertions as assertions
+
+// operation_for
+assertions.assert_string(api.operation_for("POST", "/v1/put"), "put", "POST /v1/put mapeia para put")
+assertions.assert_string(api.operation_for("POST", "/v1/get"), "get", "POST /v1/get mapeia para get")
+assertions.assert_string(api.operation_for("GET", "/v1/put"), "", "metodo errado nao mapeia")
+assertions.assert_string(api.operation_for("POST", "/v1/nope"), "", "rota desconhecida nao mapeia")
+
+// escaped_log_field: este e o caso que a semantica antiga de substring quebrava
+assertions.assert_string(api.escaped_log_field("abc"), "abc", "campo simples nao perde caractere")
+assertions.assert_string(api.escaped_log_field("a\nb"), "a\\nb", "quebra de linha e escapada")
+assertions.assert_string(api.escaped_log_field("a\tb"), "a\\tb", "tab e escapado")
+
+// quoted_log_value mantem as aspas
+assertions.assert_string(api.quoted_log_value("user:1"), "\"user:1\"", "valor citado mantem aspas")
+
+// linha de atividade
+let line: string = api.build_activity_line("POST", "/v1/put", to_bytes("{\"database\":\"usuarios\",\"key\":\"user:1\",\"value\":{}}"), 200, 3, "2026-08-16T14:32:11")
+assertions.assert_string(line, "2026-08-16T14:32:11 POST /v1/put database=usuarios key=\"user:1\" status=200 duration_ms=3", "linha de atividade completa")
+
+let unknown: string = api.build_activity_line("", "", to_bytes(""), 400, 0, "2026-08-16T14:32:12")
+assertions.assert_string(unknown, "2026-08-16T14:32:12 UNKNOWN - status=400 duration_ms=0", "request nao parseada usa placeholders")
+
+print("[PASS] api_test")
