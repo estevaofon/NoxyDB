@@ -1,3 +1,3 @@
 module noxydb
 
-noxy v0.1.0
+noxy v0.4.0

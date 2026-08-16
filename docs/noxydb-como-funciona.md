@@ -72,75 +72,28 @@ A storage engine não precisa entender objetos, arrays, números ou booleanos. P
 
 ## 2. Por que o estado em memória guarda string e não objeto?
 
-Essa é uma das decisões arquiteturais mais importantes do NoxyDB.
+O estado em memória guarda JSON serializado, não o objeto.
 
-Em vez de guardar isto em memória:
+Antes do Noxy v0.4.0 o motivo era isolamento: compostos eram vinculados por
+cópia rasa, então guardar o `map` do chamador significava compartilhar a
+estrutura aninhada com ele. Serializar era a única forma de cortar esse laço.
 
-```text
-"user:1" -> {"name": "Estevao", "profile": {...}}
-```
+**Esse motivo não existe mais.** O v0.4.0 vincula compostos por valor com
+copy-on-write, e o isolamento passou a ser garantia da linguagem em qualquer
+profundidade.
 
-o banco guarda:
+A serialização continua, por outro motivo: densidade de memória. Medido com
+50 mil documentos de 147 bytes, descontado o baseline do interpretador:
 
-```text
-"user:1" -> "{\"name\":\"Estevao\",\"profile\":{...}}"
-```
+| representação | 20 mil leituras | memória |
+|---|---:|---:|
+| `map[string, string]` serializado | 199 ms | 17,2 MB |
+| `map[string, map[string, any]]` parseado | 61 ms | 158,4 MB |
 
-Ou seja: o **JSON serializado**.
-
-### Motivo
-
-Maps, arrays e structs da Noxy possuem semântica de shallow copy. Se o banco mantivesse documentos decodificados como estado autoritativo, uma referência compartilhada para uma estrutura aninhada poderia permitir que o chamador alterasse o estado do banco sem passar por `put()`.
-
-Isso seria muito perigoso, porque uma alteração como:
-
-```text
-doc = get("user:1")
-doc["name"] = "Mudou"
-```
-
-poderia potencialmente modificar memória sem gerar nenhuma escrita no log.
-
-O NoxyDB evita isso serializando os documentos.
-
-### Fluxo do isolamento
-
-```text
-PUT
-entrada do usuário: map[string, any]
-        │
-        ▼
-serialize()
-        │
-        ▼
-payload JSON string
-        │
-        ├── vai para o log
-        └── vai para o map interno
-```
-
-No `get()`:
-
-```text
-GET
-payload JSON string
-        │
-        ▼
-deserialize()
-        │
-        ▼
-novo map[string, any]
-        │
-        ▼
-entregue ao usuário
-```
-
-Assim:
-
-- modificar o documento original depois de `put()` não altera o banco;
-- modificar o documento retornado por `get()` não altera o banco;
-- cada leitura recebe uma nova estrutura;
-- o estado autoritativo continua exatamente igual ao payload persistido.
+Guardar o objeto parseado deixa a leitura 3,3x mais rápida e custa 9x mais
+memória. Como o NoxyDB carrega o dataset inteiro em RAM, memória é o teto de
+escala do projeto: a troca derrubaria o tamanho máximo de banco em quase uma
+ordem de grandeza. Por isso o estado continua serializado.
 
 ---
 
@@ -1041,7 +994,12 @@ abre log para append
 
 O servidor não faz parte da storage engine.
 
-Ele é uma camada acima do núcleo.
+Ele é uma camada acima do núcleo, construída sobre o módulo `http_server` da
+stdlib do Noxy: esse módulo faz o accept loop, o framing HTTP (bloco de
+headers e corpo `Content-Length`) e spawna uma rotina por conexão aceita.
+`server/noxydb_server.nx` só fornece o `host`/`port`, o limite de corpo
+(`max_body_bytes`) e a função `handler()` chamada para cada requisição já
+parseada.
 
 Arquitetura simplificada:
 
@@ -1049,13 +1007,20 @@ Arquitetura simplificada:
 Cliente Python / HTTP
           │
           ▼
-     HTTP transport
+   http_server (stdlib)
+   accept loop; 1 rotina por conexão
           │
           ▼
-       protocol
+      handler()             noxydb_server.nx
           │
           ▼
-    database_worker
+      api.route()           server/api.nx
+          │
+          ▼
+     canal "commands"
+          │
+          ▼
+   database_worker           rotina única
           │
           ▼
       NoxyDB API
@@ -1064,7 +1029,11 @@ Cliente Python / HTTP
     storage engine
 ```
 
-O worker mantém algo conceitualmente como:
+`handler()` não fala com o disco diretamente. Ele traduz o `HttpRequest` em
+uma operação e devolve o resultado que `api.route()` obtém do worker.
+
+O worker (`database_worker.run_database_worker`) roda numa única rotina,
+iniciada por `spawn_task` a partir de `noxydb_server.nx`, e mantém o cache:
 
 ```text
 databases: map[string, Database]
@@ -1077,6 +1046,12 @@ Por exemplo:
 "cache"    -> Database(data/cache.db)
 "sessoes"  -> Database(data/sessoes.db)
 ```
+
+Como existe apenas uma rotina consumindo o canal `commands`, os comandos são
+executados um de cada vez, na ordem em que chegam. Isso é o que garante que
+nunca haja acesso concorrente ao mesmo arquivo `.db`, mesmo com várias
+conexões HTTP simultâneas: a concorrência acontece entre conexões disputando
+o canal de entrada, não dentro do worker.
 
 ---
 
@@ -1091,43 +1066,67 @@ client.put(
 )
 ```
 
-pode percorrer:
+do lado do cliente Python vira um `POST /v1/put` com corpo JSON
+`{"database":"usuarios","key":"user:1","value":{"name":"Estevao"}}`. No
+servidor, o caminho é:
 
 ```text
-Python client
+http_server (stdlib)
+aceita a conexão, spawna uma rotina, faz parse do HTTP em HttpRequest
       │
       ▼
-HTTP request
+handler(req)                            noxydb_server.nx
       │
       ▼
-http_transport
+api.route(method, path, body, commands, ...)
+      │
+      ├─ operation_for(method, path)          -> "put"
+      ├─ protocol.decode_api_request("put", body) -> ApiRequest
+      ├─ cria um canal de resposta (make_chan(0))
+      └─ chan_send(commands, DatabaseCommand{operation, database, key, value, response})
       │
       ▼
-protocol
+canal "commands"
       │
       ▼
-database_worker
+database_worker.run_database_worker()   rotina única, em loop
+      │
+      ├─ chan_recv(commands)                  -> DatabaseCommand
+      ├─ execute_database_command(ref databases, data_dir, command)
+      │        │
+      │        ▼
+      │   noxydb.put(ref db, key, value)
+      │        │
+      │        ├─ serialize JSON
+      │        ├─ append-only log
+      │        └─ atualiza estado em memória
+      │
+      └─ chan_send(command.response, ApiResponse)
       │
       ▼
-noxydb.put()
+canal de resposta da própria requisição
       │
       ▼
-serialize JSON
+api.route() devolve o ApiResponse para handler()
       │
       ▼
-append-only log
+handler() monta:
+  api.json_response(response)   -> HttpResponse
+  api.build_activity_line(...)  -> linha impressa no console do servidor
       │
       ▼
-atualiza estado em memória
-      │
-      ▼
-HTTP response
+http_server (stdlib) envia a resposta e fecha a conexão
       │
       ▼
 Python client
 ```
 
-O servidor é, portanto, um **adaptador remoto** para a mesma API do banco.
+O servidor é, portanto, um **adaptador remoto** para a mesma API do banco:
+`api.route()` traduz HTTP em `DatabaseCommand`, o worker único executa contra
+o `noxydb.Database` em cache e devolve o `ApiResponse` pelo canal de resposta
+criado para aquela requisição — sem fila global de respostas nem estado
+compartilhado entre requisições além do canal `commands` e do cache do
+worker.
 
 ---
 

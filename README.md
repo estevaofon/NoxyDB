@@ -136,17 +136,21 @@ let user: map[string, any] = {
     "profile": profile
 }
 
-let stored: noxydb.PutResult = noxydb.put(db, "user:1", user)
+let stored: noxydb.PutResult = noxydb.put(ref db, "user:1", user)
 if stored.success then
-    let result: noxydb.LookupResult = noxydb.get(db, "user:1")
+    let result: noxydb.LookupResult = noxydb.get(ref db, "user:1")
     if result.found then
         print(result.value["name"])
     end
 else
     print(stored.error)
 end
-noxydb.close_database(db)
+noxydb.close_database(ref db)
 ```
+
+Toda função da API recebe `ref Database`, inclusive as só-leitura. Chamada
+qualificada de módulo é fronteira dinâmica, então o `ref` é obrigatório e
+explícito — sem ele o runtime rejeita com `expected ref Database, got object`.
 
 ## NoxyDB Server
 
@@ -156,6 +160,11 @@ noxydb.close_database(db)
 
 # Install the Python client during development
 python -m pip install -e .\python
+```
+
+```powershell
+# Habilita a rota de encerramento remoto
+& "D:\path\to\noxy.exe" server\noxydb_server.nx --data-dir .\data --port 8765 --enable-shutdown
 ```
 
 ```python
@@ -189,32 +198,21 @@ contents are never logged:
 2026-08-13T14:32:11 POST /v1/get database=usuarios key="user:1" status=200 duration_ms=0
 ```
 
-The server accepts connections only on `127.0.0.1`. It has no authentication
-because it is local-only. Do not share a database's `.db` file with another
-NoxyDB process concurrently.
+O servidor usa o módulo `http_server` da stdlib do Noxy, que faz framing
+incremental do bloco de headers e do corpo `Content-Length`, com orçamento
+absoluto por fase como defesa contra slowloris. O limite de corpo é 1 MiB.
+Requisições inválidas recebem 400, 408, 413, 414, 431, 501 ou 505 com corpo
+`text/plain`; erros da API respondem em JSON. Bytes que chegam depois do corpo
+declarado são descartados, porque a conexão fecha após uma resposta.
 
-Each connection has a 1,000 ms read-idle deadline and a finite absolute
-deadline. The absolute allowance is 1,000 ms plus 1 ms per 32 possible request
-bytes (about 33.8 seconds at the 1 MiB limit); after valid headers expose a
-smaller declared body, it is shortened to the corresponding remaining size.
-This stable size allowance accommodates the runtime's byte-safe polling path
-without letting a slow client keep a handler indefinitely. A timed-out client
-receives a JSON `400 Bad Request` response and its socket is closed.
-NoxyDB serializes each poll-and-receive pair through a server-local semaphore
-because the current runtime's polling buffer is not safe for concurrent map
-writes; 10 ms poll slices prevent a stalled client from monopolizing it.
-After the declared body is complete, the server performs one immediate
-readiness probe (`net_select` with a requested zero timeout; the current Noxy
-runtime applies its 1 ms minimum) and rejects any surplus bytes already
-available before routing. It does not wait for EOF because HTTP clients wait
-for the response. Bytes that arrive only after that probe cannot be detected
-without adding a grace wait to every request; such later bytes are discarded
-when this one-request-per-connection server closes the socket.
+O servidor aceita conexões apenas em `127.0.0.1` e não tem autenticação,
+porque é local. Não compartilhe o `.db` de um banco com outro processo NoxyDB
+ao mesmo tempo.
 
 `Database.close()` in the Python client is a logical remote close: it closes
 that client handle, while the server retains the physical database handle in
 its cache. It is therefore different from embedded Noxy
-`noxydb.close_database(db)`, which physically closes the file descriptor and
+`noxydb.close_database(ref db)`, which physically closes the file descriptor and
 reports any close failure.
 
 ## Executable example
@@ -256,7 +254,7 @@ Both generated database files are ignored by Git.
 
 ## API
 
-NoxyDB v0.2 maps string keys to JSON objects represented as
+NoxyDB v0.3 maps string keys to JSON objects represented as
 map[string, any]. Scalars, arrays, and null are valid inside a document but not
 at its root.
 
@@ -301,16 +299,17 @@ compatibility logic.
 For the embedded API, the observable states remain open, normally closed, and
 failed. Writes reach the append-only log before the raw in-memory map changes.
 Write and physical-close failures are explicit. Persistence is guaranteed
-after embedded `noxydb.close_database(db)` completes successfully; crash
+after embedded `noxydb.close_database(ref db)` completes successfully; crash
 durability and `fsync` are not provided.
 
-The current Noxy runtime exposes no signal handling to this server.
-`serve_local` retains its existing cleanup path: if it returns, the command
-channel closes and the worker physically closes every cached database. Ctrl-C,
-Task Manager termination, and other process termination are abrupt, do not run
-that physical-close path, and retain the same crash-durability limitations.
-The append-only log can be replayed on restart, subject to the documented
-limitations above.
+`SIGINT` (Ctrl-C) e `SIGTERM` encerram o servidor de forma limpa: o listener
+fecha, o worker fecha fisicamente todo `.db` em cache e só então o processo
+sai. A rota `POST /v1/shutdown` faz o mesmo, e existe apenas quando o servidor
+é iniciado com `--enable-shutdown`; sem a flag ela responde 404.
+
+Terminação abrupta — `kill -9`, Task Manager, queda de energia — continua sem
+rodar esse caminho, e as limitações de durabilidade a crash permanecem: não há
+`fsync`. O log append-only pode ser reproduzido no restart.
 
 Queries, JSON Path, partial updates, indexes, schemas, collections, filters,
 compaction, TTL, remote networking, transactions, replication, and sharding
