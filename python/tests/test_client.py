@@ -556,6 +556,40 @@ class ClientTests(unittest.TestCase):
                     else:
                         self.fail(f"server response accepted non-JSON constant {constant!r}")
 
+    def test_plain_text_error_body_becomes_server_error(self) -> None:
+        # Erros de transporte do http_server da stdlib chegam como texto cru,
+        # nao como o envelope JSON da API.
+        self.server.responses.append((413, b"Content Too Large"))
+        with self.assertRaises(NoxyDBServerError) as captured:
+            self.client.health()
+        self.assertEqual(captured.exception.status, 413)
+        self.assertEqual(str(captured.exception), "Content Too Large")
+
+    def test_timeout_status_is_preserved(self) -> None:
+        self.server.responses.append((408, b"Request Timeout"))
+        with self.assertRaises(NoxyDBServerError) as captured:
+            self.client.health()
+        self.assertEqual(captured.exception.status, 408)
+
+    def test_empty_error_body_is_a_connection_error(self) -> None:
+        self.server.responses.append((500, b""))
+        with self.assertRaises(NoxyDBConnectionError):
+            self.client.health()
+
+    def test_shutdown_posts_to_the_shutdown_route(self) -> None:
+        self.server.responses.append((200, {"success": True, "error": ""}))
+        self.client.shutdown()
+        request = self.server.requests[-1]
+        self.assertEqual(request["method"], "POST")
+        self.assertEqual(request["path"], "/v1/shutdown")
+
+    def test_shutdown_reports_a_missing_route(self) -> None:
+        # Servidor iniciado sem --enable-shutdown responde 404 nesta rota.
+        self.server.responses.append((404, {"success": False, "error": "not found"}))
+        with self.assertRaises(NoxyDBServerError) as captured:
+            self.client.shutdown()
+        self.assertEqual(captured.exception.status, 404)
+
 
 if __name__ == "__main__":
     unittest.main()

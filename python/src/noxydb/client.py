@@ -113,6 +113,17 @@ class NoxyDBClient:
             raise NoxyDBServerError(200, error)
         return Database(self, name)
 
+    def shutdown(self) -> None:
+        """Pede o encerramento do servidor.
+
+        So funciona contra um servidor iniciado com --enable-shutdown; sem a
+        flag a rota nao existe e o servidor responde 404.
+        """
+        response = self._request("/v1/shutdown", {})
+        success, error = _require_operation_result(response)
+        if not success:
+            raise NoxyDBServerError(200, error)
+
     def _request(
         self,
         path: str,
@@ -141,19 +152,29 @@ class NoxyDBClient:
                 raw = response.read()
         except urllib.error.HTTPError as error:
             try:
-                decoded_error = json.loads(
-                    error.read().decode("utf-8"),
-                    parse_constant=_reject_json_constant,
-                )
+                raw_error = error.read()
             except (
-                UnicodeDecodeError,
-                json.JSONDecodeError,
                 http.client.IncompleteRead,
                 TimeoutError,
                 socket.timeout,
                 OSError,
-            ) as decode_error:
-                raise NoxyDBConnectionError("invalid error response") from decode_error
+            ) as read_error:
+                raise NoxyDBConnectionError("invalid error response") from read_error
+            try:
+                decoded_error = json.loads(
+                    raw_error.decode("utf-8"),
+                    parse_constant=_reject_json_constant,
+                )
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                # Erros de transporte vem do http_server da stdlib como
+                # text/plain, com a razao no corpo. Nao ha JSON a decodificar.
+                # Os codigos 408, 413, 414, 431, 501, 505 vem como text/plain.
+                if error.code in (408, 413, 414, 431, 501, 505):
+                    reason = raw_error.decode("utf-8", errors="replace").strip()
+                    if not reason:
+                        raise NoxyDBConnectionError("invalid error response") from error
+                    raise NoxyDBServerError(error.code, reason) from error
+                raise NoxyDBConnectionError("invalid error response") from error
             if (
                 not isinstance(decoded_error, dict)
                 or decoded_error.get("success") is not False
