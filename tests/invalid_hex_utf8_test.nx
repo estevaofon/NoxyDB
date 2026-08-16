@@ -1,0 +1,36 @@
+use io
+use noxydb.storage as storage
+use tests.assertions as assertions
+
+func write_fixture(path: string, content: string) -> void
+    if io.exists(path) then
+        io.remove(path)
+    end
+    let file: io.File = io.open(path, "w")
+    io.write(file, content)
+    io.close(file)
+end
+
+// 0xFF isolado nao e UTF-8 valido; o hex e valido, o conteudo decodificado nao.
+let key_path: string = "tests/invalid_hex_key.db"
+write_fixture(key_path, "P\tff\t7b7d\n")
+defer io.remove(key_path)
+let key_result: storage.ReplayResult = storage.replay(key_path)
+assertions.assert_false(key_result.success, "chave nao-UTF-8 deve falhar o replay")
+assertions.assert_string(key_result.error, "invalid database log record", "chave nao-UTF-8 deve ser registro invalido")
+
+let payload_path: string = "tests/invalid_hex_payload.db"
+write_fixture(payload_path, "P\t6b6579\t7b226e616d65223a22ff227d\n")
+defer io.remove(payload_path)
+let payload_result: storage.ReplayResult = storage.replay(payload_path)
+assertions.assert_false(payload_result.success, "payload nao-UTF-8 deve falhar o replay")
+assertions.assert_string(payload_result.error, "invalid database log record", "payload nao-UTF-8 deve ser registro invalido")
+
+let delete_path: string = "tests/invalid_hex_delete.db"
+write_fixture(delete_path, "P\t6b6579\t7b7d\nD\tff\n")
+defer io.remove(delete_path)
+let delete_result: storage.ReplayResult = storage.replay(delete_path)
+assertions.assert_false(delete_result.success, "chave nao-UTF-8 em D deve falhar o replay")
+assertions.assert_string(delete_result.error, "invalid database log record", "chave nao-UTF-8 em D deve ser registro invalido")
+
+print("[PASS] invalid_hex_utf8_test")

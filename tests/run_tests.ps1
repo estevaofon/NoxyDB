@@ -51,6 +51,7 @@ $persistenceTests = @(
 $errorTests = @(
     "invalid_log_test.nx",
     "invalid_document_log_test.nx",
+    "invalid_hex_utf8_test.nx",
     "open_failure_test.nx",
     "read_size_test.nx"
 )

@@ -7,6 +7,11 @@ struct ReplayResult
     error: string
 end
 
+struct DecodeResult
+    ok: bool
+    value: string
+end
+
 func is_valid_hex(value: string) -> bool
     if length(value) % 2 != 0 then
         return false
@@ -23,8 +28,12 @@ func is_valid_hex(value: string) -> bool
     return true
 end
 
-func decode_hex(value: string) -> string
-    return to_str(hex_decode(value))
+func decode_hex(value: string) -> DecodeResult
+    let raw: bytes = hex_decode(value)
+    if !strings.is_valid_utf8(raw) then
+        return DecodeResult(false, "")
+    end
+    return DecodeResult(true, to_str(raw))
 end
 
 func read_size_matches(content: string, expected_size: int) -> bool
@@ -32,7 +41,7 @@ func read_size_matches(content: string, expected_size: int) -> bool
 end
 
 func replay(path: string) -> ReplayResult
-    let payloads: map[string, string]
+    let payloads: map[string, string] = {}
     let file_info: io.FileInfo = io.stat(path)
     if !file_info.exists || file_info.is_dir then
         return ReplayResult(false, payloads, "failed to read database log")
@@ -65,16 +74,22 @@ func replay(path: string) -> ReplayResult
             if !is_valid_hex(fields.parts[1]) || !is_valid_hex(fields.parts[2]) then
                 return ReplayResult(false, payloads, "invalid database log record")
             end
-            let key: string = decode_hex(fields.parts[1])
-            let payload: string = decode_hex(fields.parts[2])
-            payloads[key] = payload
+            let key_decoded: DecodeResult = decode_hex(fields.parts[1])
+            let payload_decoded: DecodeResult = decode_hex(fields.parts[2])
+            if !key_decoded.ok || !payload_decoded.ok then
+                return ReplayResult(false, payloads, "invalid database log record")
+            end
+            payloads[key_decoded.value] = payload_decoded.value
         elif fields.count == 2 && fields.parts[0] == "D" then
             if !is_valid_hex(fields.parts[1]) then
                 return ReplayResult(false, payloads, "invalid database log record")
             end
-            let key: string = decode_hex(fields.parts[1])
-            if has_key(payloads, key) then
-                delete(payloads, key)
+            let key_decoded: DecodeResult = decode_hex(fields.parts[1])
+            if !key_decoded.ok then
+                return ReplayResult(false, payloads, "invalid database log record")
+            end
+            if has_key(payloads, key_decoded.value) then
+                delete(payloads, key_decoded.value)
             end
         else
             return ReplayResult(false, payloads, "invalid database log record")
