@@ -1,13 +1,13 @@
 use noxydb
 use sys
 
-func fail(db: noxydb.Database, message: string) -> void
+func fail(db: ref noxydb.Database, message: string) -> void
     print("Erro: " + message)
-    noxydb.close_database(db)
+    noxydb.close_database(ref db)
     sys.exit(1)
 end
 
-func require_put(db: noxydb.Database, result: noxydb.PutResult, operation: string) -> void
+func require_put(db: ref noxydb.Database, result: noxydb.PutResult, operation: string) -> void
     if !result.success then
         fail(db, operation + ": " + result.error)
     end
@@ -22,25 +22,25 @@ func new_metadata() -> map[string, any]
     return {"next_id": 1, "ids": ids}
 end
 
-func load_metadata(db: noxydb.Database) -> map[string, any]
-    let result: noxydb.LookupResult = noxydb.get(db, "usuarios:meta")
+func load_metadata(db: ref noxydb.Database) -> map[string, any]
+    let result: noxydb.LookupResult = noxydb.get(ref db, "usuarios:meta")
     if result.found then
         return result.value
     end
-    if !noxydb.is_open(db) then
-        fail(db, "falha ao ler o índice: " + noxydb.database_error(db))
+    if !noxydb.is_open(ref db) then
+        fail(db, "falha ao ler o índice: " + noxydb.database_error(ref db))
     end
     let metadata: map[string, any] = new_metadata()
-    require_put(db, noxydb.put(db, "usuarios:meta", metadata), "falha ao criar o índice")
+    require_put(db, noxydb.put(ref db, "usuarios:meta", metadata), "falha ao criar o índice")
     return metadata
 end
 
-func save_metadata(db: noxydb.Database, next_id: int, ids: any[]) -> void
+func save_metadata(db: ref noxydb.Database, next_id: int, ids: any[]) -> void
     let metadata: map[string, any] = {"next_id": next_id, "ids": ids}
-    require_put(db, noxydb.put(db, "usuarios:meta", metadata), "falha ao atualizar o índice")
+    require_put(db, noxydb.put(ref db, "usuarios:meta", metadata), "falha ao atualizar o índice")
 end
 
-func add_user(db: noxydb.Database) -> void
+func add_user(db: ref noxydb.Database) -> void
     print("Adicionar Usuário")
     let nome: string = input("Digite o nome: ")
     let email: string = input("Digite o email: ")
@@ -54,14 +54,14 @@ func add_user(db: noxydb.Database) -> void
         "email": email,
         "cargo": cargo
     }
-    require_put(db, noxydb.put(db, user_key(next_id), user), "falha ao gravar usuário")
+    require_put(db, noxydb.put(ref db, user_key(next_id), user), "falha ao gravar usuário")
     append(ids, next_id)
     // O usuário e o índice são gravações separadas porque NoxyDB não possui transações.
     save_metadata(db, next_id + 1, ids)
     print("Usuário adicionado com ID " + to_str(next_id))
 end
 
-func list_users(db: noxydb.Database) -> void
+func list_users(db: ref noxydb.Database) -> void
     print("\nListar Usuários")
     let metadata: map[string, any] = load_metadata(db)
     let ids: any[] = metadata["ids"]
@@ -71,28 +71,28 @@ func list_users(db: noxydb.Database) -> void
     let index: int = 0
     while index < length(ids) do
         let id: int = ids[index]
-        let result: noxydb.LookupResult = noxydb.get(db, user_key(id))
+        let result: noxydb.LookupResult = noxydb.get(ref db, user_key(id))
         if result.found then
             print("ID: " + to_str(result.value["id"]) + ", Nome: " + to_str(result.value["nome"]) + ", Email: " + to_str(result.value["email"]) + ", Cargo: " + to_str(result.value["cargo"]))
-        elif !noxydb.is_open(db) then
-            fail(db, "falha ao listar usuários: " + noxydb.database_error(db))
+        elif !noxydb.is_open(ref db) then
+            fail(db, "falha ao listar usuários: " + noxydb.database_error(ref db))
         end
         index = index + 1
     end
     input("\nPressione Enter para continuar...")
 end
 
-func remove_user(db: noxydb.Database) -> void
+func remove_user(db: ref noxydb.Database) -> void
     print("Remover Usuário")
     let id: int = to_int(input("Digite o id: "))
     let key: string = user_key(id)
-    if !noxydb.exists(db, key) then
+    if !noxydb.exists(ref db, key) then
         print("Usuário não encontrado.")
         return
     end
-    noxydb.remove(db, key)
-    if !noxydb.is_open(db) then
-        fail(db, "falha ao remover usuário: " + noxydb.database_error(db))
+    noxydb.remove(ref db, key)
+    if !noxydb.is_open(ref db) then
+        fail(db, "falha ao remover usuário: " + noxydb.database_error(ref db))
     end
     let metadata: map[string, any] = load_metadata(db)
     let ids: any[] = metadata["ids"]
@@ -107,11 +107,11 @@ func remove_user(db: noxydb.Database) -> void
     print("Usuário removido.")
 end
 
-func update_user(db: noxydb.Database) -> void
+func update_user(db: ref noxydb.Database) -> void
     print("Atualizar Usuário")
     let id: int = to_int(input("Digite o id: "))
     let key: string = user_key(id)
-    if !noxydb.exists(db, key) then
+    if !noxydb.exists(ref db, key) then
         print("Usuário não encontrado.")
         return
     end
@@ -124,13 +124,13 @@ func update_user(db: noxydb.Database) -> void
         "email": email,
         "cargo": cargo
     }
-    require_put(db, noxydb.put(db, key, user), "falha ao atualizar usuário")
+    require_put(db, noxydb.put(ref db, key, user), "falha ao atualizar usuário")
     print("Usuário atualizado.")
 end
 
 let db: noxydb.Database = noxydb.open_database("examples/usuarios.db")
-if !noxydb.is_open(db) then
-    print("Erro ao abrir banco: " + noxydb.database_error(db))
+if !noxydb.is_open(ref db) then
+    print("Erro ao abrir banco: " + noxydb.database_error(ref db))
     sys.exit(1)
 end
 load_metadata(db)
@@ -158,9 +158,9 @@ while running do
     end
 end
 
-noxydb.close_database(db)
-if noxydb.database_error(db) != "" then
-    print("Erro ao fechar banco: " + noxydb.database_error(db))
+noxydb.close_database(ref db)
+if noxydb.database_error(ref db) != "" then
+    print("Erro ao fechar banco: " + noxydb.database_error(ref db))
     sys.exit(1)
 end
 print("Sair")

@@ -40,6 +40,9 @@ $coreTests = @(
     "close_failure_test.nx",
     "read_before_write_regression_test.nx"
 )
+# ORDEM SIGNIFICATIVA: cada *_write_test.nx deixa o .db que o *_read_test.nx
+# seguinte consome. Alfabetizar este array faz o read consumir o arquivo da
+# execucao anterior e mascara falhas.
 $persistenceTests = @(
     "persistence_write_test.nx",
     "persistence_read_test.nx",
