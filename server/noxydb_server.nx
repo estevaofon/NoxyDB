@@ -101,6 +101,13 @@ end
 // separada porque serve() bloqueia ate o listener fechar.
 func wait_for_shutdown() -> void
     let reason: any = chan_recv(shutdown_signal)
+    // Grace delay so the handler goroutine still writing the response for
+    // the request that triggered this (e.g. POST /v1/shutdown) has time to
+    // flush its bytes before the listener closes and the process proceeds
+    // toward exit. stop_server only closes the listener, not in-flight
+    // connections -- without this, process teardown can race ahead of the
+    // in-flight write and the client sees a connection reset.
+    time.sleep(200)
     stop_server(ref server)
 end
 
