@@ -25,7 +25,7 @@ struct Database
 end
 
 func failed_database(path: string, error: string) -> Database
-    let payloads: map[string, string]
+    let payloads: map[string, string] = {}
     return Database(DatabaseState(payloads, 0, path, false, error))
 end
 
@@ -43,7 +43,7 @@ func payloads_are_valid(payloads: map[string, string]) -> bool
 end
 
 func open_database(path: string) -> Database
-    let payloads: map[string, string]
+    let payloads: map[string, string] = {}
     if io.exists(path) then
         let replay_result: storage.ReplayResult = storage.replay(path)
         if !replay_result.success then
@@ -65,13 +65,13 @@ func database_file(db: Database) -> io.File
     return io.File(db.state.file_fd, db.state.path, "a", db.state.open)
 end
 
-func fail_database(db: Database, error: string) -> void
+func fail_database(db: ref Database, error: string) -> void
     io.close_result(database_file(db))
     db.state.open = false
     db.state.error = error
 end
 
-func put(db: Database, key: string, value: map[string, any]) -> PutResult
+func put(db: ref Database, key: string, value: map[string, any]) -> PutResult
     let success: bool = false
     let error: string = "database is not open"
     if db.state.open then
@@ -93,8 +93,8 @@ func put(db: Database, key: string, value: map[string, any]) -> PutResult
     return PutResult(success, error)
 end
 
-func get(db: Database, key: string) -> LookupResult
-    let empty: map[string, any]
+func get(db: ref Database, key: string) -> LookupResult
+    let empty: map[string, any] = {}
     let found: bool = false
     let value: map[string, any] = empty
     if db.state.open && has_key(db.state.payloads, key) then
@@ -109,7 +109,7 @@ func get(db: Database, key: string) -> LookupResult
     return LookupResult(found, value)
 end
 
-func remove(db: Database, key: string) -> void
+func remove(db: ref Database, key: string) -> void
     if db.state.open && has_key(db.state.payloads, key) then
         let result: io.IOWriteResult = storage.append_remove(database_file(db), key)
         if !result.success then
@@ -120,11 +120,11 @@ func remove(db: Database, key: string) -> void
     end
 end
 
-func exists(db: Database, key: string) -> bool
+func exists(db: ref Database, key: string) -> bool
     return db.state.open && has_key(db.state.payloads, key)
 end
 
-func close_database(db: Database) -> void
+func close_database(db: ref Database) -> void
     if db.state.open then
         let result: io.IOCloseResult = io.close_result(database_file(db))
         db.state.open = false
@@ -134,10 +134,10 @@ func close_database(db: Database) -> void
     end
 end
 
-func is_open(db: Database) -> bool
+func is_open(db: ref Database) -> bool
     return db.state.open
 end
 
-func database_error(db: Database) -> string
+func database_error(db: ref Database) -> string
     return db.state.error
 end

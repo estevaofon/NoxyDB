@@ -4,9 +4,9 @@ use tests.assertions as assertions
 
 let path: string = "tests/history.db"
 let db: noxydb.Database = noxydb.open_database(path)
-let version: noxydb.LookupResult = noxydb.get(db, "version")
+let version: noxydb.LookupResult = noxydb.get(ref db, "version")
 assertions.assert_true(version.found, "final put should restore key")
 assertions.assert_true(version.value["number"] == 4, "replay should preserve final document")
-noxydb.close_database(db)
+noxydb.close_database(ref db)
 io.remove(path)
 print("[PASS] history_read_test")

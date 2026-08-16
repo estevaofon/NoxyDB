@@ -3,17 +3,15 @@ use noxydb
 use tests.assertions as assertions
 
 let path: string = "tests/empty.db"
-if io.exists(path) then
-    io.remove(path)
-end
+if io.exists(path) then io.remove(path) end
+defer io.remove(path)
 
 let created: noxydb.Database = noxydb.open_database(path)
-assertions.assert_true(noxydb.is_open(created), "empty database should be created")
-noxydb.close_database(created)
+assertions.assert_true(noxydb.is_open(ref created), "empty database should be created")
+noxydb.close_database(ref created)
 
 let reopened: noxydb.Database = noxydb.open_database(path)
-assertions.assert_true(noxydb.is_open(reopened), "empty database should reopen")
-assertions.assert_false(noxydb.get(reopened, "missing").found, "empty database should contain no keys")
-noxydb.close_database(reopened)
-io.remove(path)
+assertions.assert_true(noxydb.is_open(ref reopened), "empty database should reopen")
+assertions.assert_false(noxydb.get(ref reopened, "missing").found, "empty database should contain no keys")
+noxydb.close_database(ref reopened)
 print("[PASS] empty_database_test")

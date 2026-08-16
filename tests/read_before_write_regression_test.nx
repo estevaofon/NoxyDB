@@ -1,0 +1,43 @@
+use io
+use time
+use noxydb
+use tests.assertions as assertions
+
+let N: int = 2000
+let doc: map[string, any] = {"v": 1}
+
+let write_only_path: string = "tests/regression_write_only.db"
+if io.exists(write_only_path) then io.remove(write_only_path) end
+defer io.remove(write_only_path)
+let a: noxydb.Database = noxydb.open_database(write_only_path)
+let t0: int = time.now_ms()
+let i: int = 0
+while i < N do
+    let written: noxydb.PutResult = noxydb.put(ref a, "key:" + to_str(i), doc)
+    i = i + 1
+end
+let write_only_ms: int = time.now_ms() - t0
+noxydb.close_database(ref a)
+
+let interleaved_path: string = "tests/regression_interleaved.db"
+if io.exists(interleaved_path) then io.remove(interleaved_path) end
+defer io.remove(interleaved_path)
+let b: noxydb.Database = noxydb.open_database(interleaved_path)
+let t1: int = time.now_ms()
+let j: int = 0
+while j < N do
+    let present: bool = noxydb.exists(ref b, "key:" + to_str(j))
+    let written: noxydb.PutResult = noxydb.put(ref b, "key:" + to_str(j), doc)
+    j = j + 1
+end
+let interleaved_ms: int = time.now_ms() - t1
+noxydb.close_database(ref b)
+
+// Se alguem trocar um parametro ref por valor, o copy-on-write marca o estado
+// como compartilhado e cada put passa a clonar a keyspace inteira. A razao
+// entre os dois laços explode: medido 5096ms contra 16ms em N=5000.
+// O termo constante absorve jitter quando write_only_ms e muito pequeno.
+let budget_ms: int = write_only_ms * 5 + 200
+assertions.assert_true(interleaved_ms < budget_ms, "ler antes de escrever nao pode multiplicar o custo da escrita - " + to_str(interleaved_ms) + "ms contra orcamento de " + to_str(budget_ms) + "ms")
+
+print("[PASS] read_before_write_regression_test (write_only=" + to_str(write_only_ms) + "ms interleaved=" + to_str(interleaved_ms) + "ms)")

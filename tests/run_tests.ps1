@@ -37,7 +37,8 @@ $coreTests = @(
     "document_codec_test.nx",
     "document_isolation_test.nx",
     "write_failure_test.nx",
-    "close_failure_test.nx"
+    "close_failure_test.nx",
+    "read_before_write_regression_test.nx"
 )
 $persistenceTests = @(
     "persistence_write_test.nx",

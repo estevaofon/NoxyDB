@@ -14,8 +14,8 @@ end
 func assert_invalid_payload(path: string, payload: string) -> void
     write_payload_hex(path, hex_encode(payload))
     let db: noxydb.Database = noxydb.open_database(path)
-    assertions.assert_false(noxydb.is_open(db), "invalid payload should fail open")
-    assertions.assert_string(noxydb.database_error(db), "invalid document payload", "payload error should be exact")
+    assertions.assert_false(noxydb.is_open(ref db), "invalid payload should fail open")
+    assertions.assert_string(noxydb.database_error(ref db), "invalid document payload", "payload error should be exact")
     assertions.assert_true(length(keys(db.state.payloads)) == 0, "failed open should expose no partial raw state")
     io.remove(path)
 end

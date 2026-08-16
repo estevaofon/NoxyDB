@@ -2,11 +2,11 @@ use noxydb
 use tests.assertions as assertions
 
 let read_failure: noxydb.Database = noxydb.open_database("tests")
-assertions.assert_false(noxydb.is_open(read_failure), "directory path should not open as a database")
-assertions.assert_string(noxydb.database_error(read_failure), "failed to read database log", "unreadable existing path should report a read failure")
+assertions.assert_false(noxydb.is_open(ref read_failure), "directory path should not open as a database")
+assertions.assert_string(noxydb.database_error(ref read_failure), "failed to read database log", "unreadable existing path should report a read failure")
 
 let append_failure: noxydb.Database = noxydb.open_database("tests/missing-parent-for-open-failure/database.db")
-assertions.assert_false(noxydb.is_open(append_failure), "database with a missing parent should not open")
-assertions.assert_string(noxydb.database_error(append_failure), "failed to open database log for append", "new path with missing parent should report append-open failure")
+assertions.assert_false(noxydb.is_open(ref append_failure), "database with a missing parent should not open")
+assertions.assert_string(noxydb.database_error(ref append_failure), "failed to open database log for append", "new path with missing parent should report append-open failure")
 
 print("[PASS] open_failure_test")

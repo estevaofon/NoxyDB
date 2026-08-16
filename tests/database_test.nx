@@ -2,72 +2,72 @@ use io
 use noxydb
 use tests.assertions as assertions
 
-func verify_removal_and_close(db: noxydb.Database) -> void
+func verify_removal_and_close(db: ref noxydb.Database) -> void
     let author: map[string, any] = {"name": "Estevao"}
     let version: map[string, any] = {"number": 2}
-    assertions.assert_true(noxydb.put(db, "author", author).success, "author should store")
-    assertions.assert_true(noxydb.put(db, "version", version).success, "version should store")
-    assertions.assert_true(noxydb.exists(db, "author"), "exists should find author")
-    assertions.assert_true(noxydb.exists(db, "version"), "multiple keys should coexist")
-    noxydb.remove(db, "author")
-    assertions.assert_false(noxydb.exists(db, "author"), "removed key should not exist")
-    assertions.assert_false(noxydb.get(db, "author").found, "removed lookup should be absent")
-    noxydb.remove(db, "missing")
+    assertions.assert_true(noxydb.put(ref db, "author", author).success, "author should store")
+    assertions.assert_true(noxydb.put(ref db, "version", version).success, "version should store")
+    assertions.assert_true(noxydb.exists(ref db, "author"), "exists should find author")
+    assertions.assert_true(noxydb.exists(ref db, "version"), "multiple keys should coexist")
+    noxydb.remove(ref db, "author")
+    assertions.assert_false(noxydb.exists(ref db, "author"), "removed key should not exist")
+    assertions.assert_false(noxydb.get(ref db, "author").found, "removed lookup should be absent")
+    noxydb.remove(ref db, "missing")
 
-    noxydb.close_database(db)
-    assertions.assert_false(noxydb.is_open(db), "closed database should not be open")
-    assertions.assert_string(noxydb.database_error(db), "", "normal close should have no error")
-    noxydb.close_database(db)
-    assertions.assert_string(noxydb.database_error(db), "", "second close should be a no-op")
+    noxydb.close_database(ref db)
+    assertions.assert_false(noxydb.is_open(ref db), "closed database should not be open")
+    assertions.assert_string(noxydb.database_error(ref db), "", "normal close should have no error")
+    noxydb.close_database(ref db)
+    assertions.assert_string(noxydb.database_error(ref db), "", "second close should be a no-op")
 
     let ignored: map[string, any] = {"ignored": true}
-    let closed_put: noxydb.PutResult = noxydb.put(db, "after-close", ignored)
+    let closed_put: noxydb.PutResult = noxydb.put(ref db, "after-close", ignored)
     assertions.assert_false(closed_put.success, "put should reject closed database")
     assertions.assert_string(closed_put.error, "database is not open", "closed put should be classified")
-    assertions.assert_false(noxydb.exists(db, "version"), "exists should reject closed database")
-    assertions.assert_false(noxydb.get(db, "language").found, "get should reject closed database")
+    assertions.assert_false(noxydb.exists(ref db, "version"), "exists should reject closed database")
+    assertions.assert_false(noxydb.get(ref db, "language").found, "get should reject closed database")
 end
 
 let path: string = "tests/database_test.db"
 if io.exists(path) then io.remove(path) end
+defer io.remove(path)
 let db: noxydb.Database = noxydb.open_database(path)
-assertions.assert_true(noxydb.is_open(db), "new database should be open")
-assertions.assert_string(noxydb.database_error(db), "", "new database should not have an error")
+assertions.assert_true(noxydb.is_open(ref db), "new database should be open")
+assertions.assert_string(noxydb.database_error(ref db), "", "new database should not have an error")
 
 let first: map[string, any] = {"name": "Noxy", "version": 2, "active": true}
-let put_result: noxydb.PutResult = noxydb.put(db, "language", first)
+let put_result: noxydb.PutResult = noxydb.put(ref db, "language", first)
 assertions.assert_true(put_result.success, "valid document should store")
 assertions.assert_string(put_result.error, "", "successful put should have no error")
 
-let language: noxydb.LookupResult = noxydb.get(db, "language")
+let language: noxydb.LookupResult = noxydb.get(ref db, "language")
 assertions.assert_true(language.found, "put key should be found")
 assertions.assert_true(language.value["name"] == "Noxy", "string field should return")
 assertions.assert_true(language.value["version"] == 2, "integer field should return")
 
 let replacement: map[string, any] = {"name": "NoxyDB", "nested": {"stable": true}}
-assertions.assert_true(noxydb.put(db, "language", replacement).success, "overwrite should succeed")
-let overwritten: noxydb.LookupResult = noxydb.get(db, "language")
+assertions.assert_true(noxydb.put(ref db, "language", replacement).success, "overwrite should succeed")
+let overwritten: noxydb.LookupResult = noxydb.get(ref db, "language")
 assertions.assert_true(overwritten.value["name"] == "NoxyDB", "latest document should win")
 assertions.assert_false(has_key(overwritten.value, "version"), "overwrite should replace the whole document")
 
 let empty_document: map[string, any] = {}
-assertions.assert_true(noxydb.put(db, "", empty_document).success, "empty object should store")
-let empty: noxydb.LookupResult = noxydb.get(db, "")
+assertions.assert_true(noxydb.put(ref db, "", empty_document).success, "empty object should store")
+let empty: noxydb.LookupResult = noxydb.get(ref db, "")
 assertions.assert_true(empty.found, "empty object should differ from absence")
 assertions.assert_true(length(keys(empty.value)) == 0, "empty object should round-trip")
 
 let invalid: map[string, any] = {"raw": b"abc"}
-let invalid_result: noxydb.PutResult = noxydb.put(db, "invalid", invalid)
+let invalid_result: noxydb.PutResult = noxydb.put(ref db, "invalid", invalid)
 assertions.assert_false(invalid_result.success, "invalid document should fail")
 assertions.assert_string(invalid_result.error, "document is not JSON-compatible", "invalid document error should be explicit")
-assertions.assert_true(noxydb.is_open(db), "invalid input should not fail database")
-assertions.assert_false(noxydb.exists(db, "invalid"), "invalid input should not mutate state")
+assertions.assert_true(noxydb.is_open(ref db), "invalid input should not fail database")
+assertions.assert_false(noxydb.exists(ref db, "invalid"), "invalid input should not mutate state")
 
-let missing: noxydb.LookupResult = noxydb.get(db, "missing")
+let missing: noxydb.LookupResult = noxydb.get(ref db, "missing")
 assertions.assert_false(missing.found, "missing key should not be found")
 assertions.assert_true(length(keys(missing.value)) == 0, "missing lookup should carry an empty object")
 
 verify_removal_and_close(db)
 
-if io.exists(path) then io.remove(path) end
 print("[PASS] database_test")
