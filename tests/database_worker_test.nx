@@ -10,8 +10,11 @@ let data_dir: string = "tests/tmp_server_worker_" + to_str(time.now_ms())
 let directory_created: bool = io.mkdir(data_dir)
 let first_path: string = data_dir + "/usuarios.db"
 let second_path: string = data_dir + "/pedidos.db"
+defer io.remove(data_dir)
+defer io.remove(second_path)
+defer io.remove(first_path)
 
-let databases: map[string, noxydb.Database]
+let databases: map[string, noxydb.Database] = {}
 
 let open_users: protocol.ApiResponse = worker.execute_database_command(ref databases, data_dir, worker.new_database_command("open", "usuarios", "", {}))
 let first_created: bool = io.exists(first_path)
@@ -32,9 +35,6 @@ let remove_user: protocol.ApiResponse = worker.execute_database_command(ref data
 let remove_again: protocol.ApiResponse = worker.execute_database_command(ref databases, data_dir, worker.new_database_command("remove", "usuarios", "user:1", {}))
 
 worker.close_all_databases(ref databases)
-let first_removed: bool = !io.exists(first_path) || io.remove(first_path)
-let second_removed: bool = !io.exists(second_path) || io.remove(second_path)
-let directory_removed: bool = !io.exists(data_dir) || io.remove(data_dir)
 
 assertions.assert_true(directory_created, "unique test directory should be created")
 assertions.assert_int(open_users.status, 200, "open should succeed")
@@ -47,7 +47,4 @@ assertions.assert_int(open_orders.status, 200, "second database should open")
 assertions.assert_true(strings.contains(isolated.json, "\"exists\":false"), "databases should be isolated")
 assertions.assert_int(remove_user.status, 200, "remove should succeed")
 assertions.assert_int(remove_again.status, 200, "remove should be idempotent")
-assertions.assert_true(first_removed, "first test database should be removed")
-assertions.assert_true(second_removed, "second test database should be removed")
-assertions.assert_true(directory_removed, "unique test directory should be removed")
 print("database worker tests passed")
