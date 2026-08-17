@@ -305,7 +305,12 @@ durability and `fsync` are not provided.
 `SIGINT` (Ctrl-C) e `SIGTERM` encerram o servidor de forma limpa: o listener
 fecha, o worker fecha fisicamente todo `.db` em cache e só então o processo
 sai. A rota `POST /v1/shutdown` faz o mesmo, e existe apenas quando o servidor
-é iniciado com `--enable-shutdown`; sem a flag ela responde 404.
+é iniciado com `--enable-shutdown`; sem a flag ela responde 404. O caminho por
+sinal é verificado manualmente, e não pela suíte automatizada, porque
+`process.terminate()` no Windows chama `TerminateProcess` em vez de entregar um
+`SIGTERM` de verdade e não há forma portável de disparar esse caminho a partir
+do harness de testes atual — só a rota `POST /v1/shutdown` tem cobertura
+automatizada ponta a ponta.
 
 Terminação abrupta — `kill -9`, Task Manager, queda de energia — continua sem
 rodar esse caminho, e as limitações de durabilidade a crash permanecem: não há

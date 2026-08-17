@@ -1,4 +1,7 @@
+use strings
+use http_parser select *
 use server.api as api
+use server.protocol as protocol
 use tests.assertions as assertions
 
 // operation_for
@@ -21,5 +24,53 @@ assertions.assert_string(line, "2026-08-16T14:32:11 POST /v1/put database=usuari
 
 let unknown: string = api.build_activity_line("", "", to_bytes(""), 400, 0, "2026-08-16T14:32:12")
 assertions.assert_string(unknown, "2026-08-16T14:32:12 UNKNOWN - status=400 duration_ms=0", "request nao parseada usa placeholders")
+
+// known_path: separa 405 (rota existe, metodo errado) de 404 (rota nao existe)
+assertions.assert_true(api.known_path("/v1/health"), "/v1/health e rota conhecida")
+assertions.assert_true(api.known_path("/v1/put"), "/v1/put e rota conhecida")
+assertions.assert_false(api.known_path("/v1/nope"), "/v1/nope nao e rota conhecida")
+// /v1/shutdown e tratada antes de known_path em route, por isso fica de fora.
+assertions.assert_false(api.known_path("/v1/shutdown"), "/v1/shutdown nao entra em known_path")
+
+// route: os ramos abaixo respondem sem despachar nada pelo canal commands,
+// entao nao e preciso um worker vivo do outro lado.
+let commands: chan any = make_chan(1)
+let shutdown_signal: chan any = make_chan(1)
+let no_body: bytes = to_bytes("")
+
+let health: protocol.ApiResponse = api.route("GET", "/v1/health", no_body, commands, false, shutdown_signal)
+assertions.assert_int(health.status, 200, "GET /v1/health responde 200")
+
+let wrong_method: protocol.ApiResponse = api.route("GET", "/v1/put", no_body, commands, false, shutdown_signal)
+assertions.assert_int(wrong_method.status, 405, "rota conhecida com metodo errado responde 405")
+assertions.assert_true(strings.contains(wrong_method.json, "\"error\":\"method not allowed\""), "405 traz o envelope de erro - " + wrong_method.json)
+
+let unknown_path: protocol.ApiResponse = api.route("POST", "/v1/nope", no_body, commands, false, shutdown_signal)
+assertions.assert_int(unknown_path.status, 404, "rota desconhecida responde 404")
+assertions.assert_true(strings.contains(unknown_path.json, "\"error\":\"not found\""), "404 traz o envelope de erro - " + unknown_path.json)
+
+// /v1/shutdown so existe com --enable-shutdown; sem a flag some como 404.
+let shutdown_disabled: protocol.ApiResponse = api.route("POST", "/v1/shutdown", no_body, commands, false, shutdown_signal)
+assertions.assert_int(shutdown_disabled.status, 404, "shutdown sem a flag responde 404")
+
+let shutdown_wrong_method: protocol.ApiResponse = api.route("GET", "/v1/shutdown", no_body, commands, true, shutdown_signal)
+assertions.assert_int(shutdown_wrong_method.status, 405, "shutdown com metodo errado responde 405")
+
+let shutdown_ok: protocol.ApiResponse = api.route("POST", "/v1/shutdown", no_body, commands, true, shutdown_signal)
+assertions.assert_int(shutdown_ok.status, 200, "shutdown habilitado responde 200")
+assertions.assert_true(chan_recv(shutdown_signal) == true, "shutdown habilitado sinaliza o encerramento")
+
+// json_response: response_json devolve 200 com application/json; sobrescrever o
+// status nao pode perder o Content-Type nem o corpo JSON da API.
+let conflict: HttpResponse = api.json_response(protocol.api_error(409, "database is not open"))
+assertions.assert_int(conflict.status_code, 409, "json_response preserva o status de erro")
+assertions.assert_string(conflict.status_text, "Conflict", "json_response traduz o status para a razao HTTP")
+assertions.assert_string(conflict.headers[0], "Content-Type: application/json", "erro continua saindo como JSON")
+assertions.assert_true(strings.contains(to_str(conflict.body), "\"error\":\"database is not open\""), "corpo do erro continua sendo o envelope da API - " + to_str(conflict.body))
+
+let ok_response: HttpResponse = api.json_response(protocol.api_success({"success": true, "error": ""}))
+assertions.assert_int(ok_response.status_code, 200, "json_response mantem 200 no sucesso")
+assertions.assert_string(ok_response.status_text, "OK", "sucesso usa a razao OK")
+assertions.assert_string(to_str(ok_response.body), "{\"success\":true,\"error\":\"\"}", "corpo de sucesso e o envelope da API")
 
 print("[PASS] api_test")

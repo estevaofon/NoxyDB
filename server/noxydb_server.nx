@@ -127,11 +127,40 @@ print("NoxyDB server listening on http://127.0.0.1:" + to_str(options.port))
 serve(ref server, handler)
 
 chan_close(commands)
-let worker_ack: any = chan_recv(worker_done)
-let outcome: any = task_await(worker_task, 0)
-if outcome["status"] == "error" then
-    let failure: map[string, any] = outcome["error"]
-    print("database worker failed: " + to_str(failure["message"]))
+
+// Supervisao do worker. Um chan_recv(worker_done) direto trava para sempre se a
+// rotina do worker levantar no meio de um comando: ela nunca chega ao proprio
+// chan_send(done, true) e o processo fica em deadlock, sem nunca alcancar o
+// diagnostico de erro. O laco abaixo corre as duas possibilidades ao mesmo
+// tempo, com prazo maximo.
+//
+// A ORDEM IMPORTA: worker_done tem capacidade 0, entao o chan_send do worker
+// so retorna depois que alguem recebe. Esperar o task_await virar "ok" ANTES de
+// receber trava do mesmo jeito - o task nunca conclui enquanto o handshake nao
+// for drenado. Por isso a tentativa de recv acontece em toda iteracao, e nao
+// atras do status do task. task_await(worker_task, 50) tambem serve de pausa,
+// entao nao ha time.sleep aqui.
+let supervise_deadline: int = time.now_ms() + 10000
+let worker_closed_cleanly: bool = false
+let worker_failed: bool = false
+while !worker_closed_cleanly && !worker_failed && time.now_ms() < supervise_deadline do
+    when
+        case ack = chan_recv(worker_done) then
+            worker_closed_cleanly = true
+        default
+            let outcome: any = task_await(worker_task, 50)
+            if outcome["status"] == "error" then
+                let failure: map[string, any] = outcome["error"]
+                print("database worker failed: " + to_str(failure["message"]))
+                worker_failed = true
+            end
+    end
+end
+if worker_failed then
+    sys.exit(1)
+end
+if !worker_closed_cleanly then
+    print("database worker did not confirm shutdown within the deadline")
     sys.exit(1)
 end
 print("NoxyDB server stopped")

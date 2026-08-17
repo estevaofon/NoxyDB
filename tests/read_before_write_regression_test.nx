@@ -6,6 +6,42 @@ use tests.assertions as assertions
 let N: int = 2000
 let doc: map[string, any] = {"v": 1}
 
+func put_only_ms(path: string, total: int) -> int
+    if io.exists(path) then io.remove(path) end
+    let db: noxydb.Database = noxydb.open_database(path)
+    let payload: map[string, any] = {"v": 1}
+    let started_at: int = time.now_ms()
+    let index: int = 0
+    while index < total do
+        let written: noxydb.PutResult = noxydb.put(ref db, "key:" + to_str(index), payload)
+        index = index + 1
+    end
+    let elapsed: int = time.now_ms() - started_at
+    noxydb.close_database(ref db)
+    return elapsed
+end
+
+// ESCALA ABSOLUTA. A comparacao write-only contra interleaved (mais abaixo) e
+// cega para uma regressao que atinja os DOIS lacos: se o proprio put voltar a
+// compartilhar o estado - por exemplo passando o Database por valor para um
+// helper dentro do put - os dois tempos crescem juntos e a razao entre eles
+// continua pequena, mesmo com o custo absoluto quebrado. Aqui dobramos N: um
+// put linear dobra o tempo, um put O(N^2) quadruplica.
+// Esta medicao vem primeiro de proposito, num processo ainda frio, para que o
+// custo por put nao seja distorcido pelos lacos seguintes.
+let base_path: string = "tests/regression_scaling_base.db"
+let double_path: string = "tests/regression_scaling_double.db"
+defer io.remove(base_path)
+defer io.remove(double_path)
+let base_ms: int = put_only_ms(base_path, N)
+let double_ms: int = put_only_ms(double_path, N * 2)
+
+// 2.5x em vez de 2x deixa folga para jitter de agendamento e cache do sistema
+// de arquivos, e ainda fica bem abaixo do 4x-5x que o comportamento quadratico
+// produz. O termo constante absorve medicoes muito pequenas.
+let scaling_budget_ms: int = base_ms * 5 / 2 + 150
+assertions.assert_true(double_ms < scaling_budget_ms, "dobrar N nao pode quadruplicar o custo do put - N=" + to_str(N) + " levou " + to_str(base_ms) + "ms e N=" + to_str(N * 2) + " levou " + to_str(double_ms) + "ms contra orcamento de " + to_str(scaling_budget_ms) + "ms")
+
 let write_only_path: string = "tests/regression_write_only.db"
 if io.exists(write_only_path) then io.remove(write_only_path) end
 defer io.remove(write_only_path)
@@ -40,4 +76,4 @@ noxydb.close_database(ref b)
 let budget_ms: int = write_only_ms * 5 + 200
 assertions.assert_true(interleaved_ms < budget_ms, "ler antes de escrever nao pode multiplicar o custo da escrita - " + to_str(interleaved_ms) + "ms contra orcamento de " + to_str(budget_ms) + "ms")
 
-print("[PASS] read_before_write_regression_test (write_only=" + to_str(write_only_ms) + "ms interleaved=" + to_str(interleaved_ms) + "ms)")
+print("[PASS] read_before_write_regression_test (escala N=" + to_str(base_ms) + "ms 2N=" + to_str(double_ms) + "ms write_only=" + to_str(write_only_ms) + "ms interleaved=" + to_str(interleaved_ms) + "ms)")

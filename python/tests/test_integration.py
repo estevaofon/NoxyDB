@@ -244,6 +244,20 @@ class IntegrationTests(_ServerHarness):
             self.client._request("/v1/open", {"database": "../outside"})
         self.assertEqual(raised.exception.status, 400)
 
+    def test_transport_error_reaches_the_client_with_its_status(self) -> None:
+        """Erro de transporte real subindo pelo CLIENTE, nao por socket cru.
+
+        Os demais testes de transporte (408, 413) usam _raw_http e param no
+        byte da resposta; nenhum verificava que o cliente traduz um corpo
+        text/plain do http_server em NoxyDBServerError com o status
+        preservado. Esse e exatamente o caminho que a classificacao por
+        Content-Type (spec SS6.4) corrigiu.
+        """
+        db = self.client.open_database("oversized")
+        with self.assertRaises(NoxyDBServerError) as raised:
+            db.put("big", {"blob": "x" * (1024 * 1024 + 64)})
+        self.assertEqual(raised.exception.status, 413)
+
     def test_invalid_log_error_does_not_expose_data_path(self) -> None:
         invalid_path = self.data_dir / "broken.db"
         invalid_path.write_bytes(b"P\t00")
