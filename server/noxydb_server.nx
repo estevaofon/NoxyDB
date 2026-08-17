@@ -1,13 +1,18 @@
 use io
 use sys
+use time
 use strings
+use http_parser select *
+use http_server select *
+use server.protocol as protocol
 use server.database_worker as worker
-use server.http_transport as transport
+use server.api as api
 
 struct ServerOptions
     valid: bool
     data_dir: string
     port: int
+    enable_shutdown: bool
     error: string
 end
 
@@ -22,39 +27,43 @@ func decimal_token(value: string) -> bool
 end
 
 func parse_port(value: string) -> ServerOptions
-    if !decimal_token(value) then return ServerOptions(false, "", 0, "port must be a decimal number") end
+    if !decimal_token(value) then return ServerOptions(false, "", 0, false, "port must be a decimal number") end
     let first_significant: int = 0
     while first_significant < length(value) && strings.char_at(value, first_significant) == "0" do
         first_significant = first_significant + 1
     end
     let normalized: string = "0"
     if first_significant < length(value) then normalized = strings.substring(value, first_significant, length(value)) end
-    if length(normalized) > 5 then return ServerOptions(false, "", 0, "port must be between 1 and 65535") end
+    if length(normalized) > 5 then return ServerOptions(false, "", 0, false, "port must be between 1 and 65535") end
     let port: int = to_int(normalized)
-    if port < 1 || port > 65535 then return ServerOptions(false, "", 0, "port must be between 1 and 65535") end
-    return ServerOptions(true, "", port, "")
+    if port < 1 || port > 65535 then return ServerOptions(false, "", 0, false, "port must be between 1 and 65535") end
+    return ServerOptions(true, "", port, false, "")
 end
 
 func parse_options(args: string[]) -> ServerOptions
     let data_dir: string = ""
     let port: int = 8765
+    let enable_shutdown: bool = false
     let index: int = 2
     while index < length(args) do
         if args[index] == "--data-dir" && index + 1 < length(args) then
             data_dir = args[index + 1]
             index = index + 2
+        elif args[index] == "--enable-shutdown" then
+            enable_shutdown = true
+            index = index + 1
         elif args[index] == "--port" && index + 1 < length(args) then
             let parsed_port: ServerOptions = parse_port(args[index + 1])
             if !parsed_port.valid then return parsed_port end
             port = parsed_port.port
             index = index + 2
         else
-            return ServerOptions(false, "", 0, "usage: noxy noxydb_server.nx --data-dir <path> [--port <1-65535>]")
+            return ServerOptions(false, "", 0, false, "usage: noxy noxydb_server.nx --data-dir <path> [--port <1-65535>] [--enable-shutdown]")
         end
     end
-    if data_dir == "" then return ServerOptions(false, "", 0, "--data-dir is required") end
-    if port < 1 || port > 65535 then return ServerOptions(false, "", 0, "port must be between 1 and 65535") end
-    return ServerOptions(true, data_dir, port, "")
+    if data_dir == "" then return ServerOptions(false, "", 0, false, "--data-dir is required") end
+    if port < 1 || port > 65535 then return ServerOptions(false, "", 0, false, "port must be between 1 and 65535") end
+    return ServerOptions(true, data_dir, port, enable_shutdown, "")
 end
 
 let options: ServerOptions = parse_options(sys.argv())
@@ -73,7 +82,85 @@ elif !io.mkdir(options.data_dir) then
 end
 
 let commands: chan any = make_chan(64)
-spawn(worker.run_database_worker, commands, options.data_dir, worker.execute_database_command, worker.close_all_databases)
+let worker_done: chan any = make_chan(0)
+let shutdown_signal: chan any = make_chan(1)
+let signals: chan any = make_chan(1)
+let server: HttpServer = new_server("127.0.0.1", options.port)
+server.max_body_bytes = 1048576
+
+func handler(req: HttpRequest) -> HttpResponse
+    let started_at: int = time.now_ms()
+    let response: protocol.ApiResponse = api.route(req.method, req.path, req.body, commands, options.enable_shutdown, shutdown_signal)
+    let built: HttpResponse = api.json_response(response)
+    let timestamp: string = time.format_custom(time.now_datetime(), "%Y-%m-%dT%H:%M:%S")
+    print(api.build_activity_line(req.method, req.path, req.body, response.status, time.now_ms() - started_at, timestamp))
+    return built
+end
+
+// Espera qualquer gatilho de encerramento e para o listener. Roda em rotina
+// separada porque serve() bloqueia ate o listener fechar.
+func wait_for_shutdown() -> void
+    let reason: any = chan_recv(shutdown_signal)
+    // Grace delay so the handler goroutine still writing the response for
+    // the request that triggered this (e.g. POST /v1/shutdown) has time to
+    // flush its bytes before the listener closes and the process proceeds
+    // toward exit. stop_server only closes the listener, not in-flight
+    // connections -- without this, process teardown can race ahead of the
+    // in-flight write and the client sees a connection reset.
+    time.sleep(200)
+    stop_server(ref server)
+end
+
+func wait_for_signal() -> void
+    let received: any = chan_recv(signals)
+    print("received signal " + to_str(received) + ", shutting down")
+    chan_send(shutdown_signal, true)
+end
+
+let worker_task: any = spawn_task(worker.run_database_worker, commands, worker_done, options.data_dir, worker.execute_database_command, worker.close_all_databases)
+spawn(wait_for_shutdown)
+if sys.signal_notify(signals) then
+    spawn(wait_for_signal)
+end
+
 print("NoxyDB server listening on http://127.0.0.1:" + to_str(options.port))
-transport.serve_local(options.port, commands)
+serve(ref server, handler)
+
 chan_close(commands)
+
+// Supervisao do worker. Um chan_recv(worker_done) direto trava para sempre se a
+// rotina do worker levantar no meio de um comando: ela nunca chega ao proprio
+// chan_send(done, true) e o processo fica em deadlock, sem nunca alcancar o
+// diagnostico de erro. O laco abaixo corre as duas possibilidades ao mesmo
+// tempo, com prazo maximo.
+//
+// A ORDEM IMPORTA: worker_done tem capacidade 0, entao o chan_send do worker
+// so retorna depois que alguem recebe. Esperar o task_await virar "ok" ANTES de
+// receber trava do mesmo jeito - o task nunca conclui enquanto o handshake nao
+// for drenado. Por isso a tentativa de recv acontece em toda iteracao, e nao
+// atras do status do task. task_await(worker_task, 50) tambem serve de pausa,
+// entao nao ha time.sleep aqui.
+let supervise_deadline: int = time.now_ms() + 10000
+let worker_closed_cleanly: bool = false
+let worker_failed: bool = false
+while !worker_closed_cleanly && !worker_failed && time.now_ms() < supervise_deadline do
+    when
+        case ack = chan_recv(worker_done) then
+            worker_closed_cleanly = true
+        default
+            let outcome: any = task_await(worker_task, 50)
+            if outcome["status"] == "error" then
+                let failure: map[string, any] = outcome["error"]
+                print("database worker failed: " + to_str(failure["message"]))
+                worker_failed = true
+            end
+    end
+end
+if worker_failed then
+    sys.exit(1)
+end
+if !worker_closed_cleanly then
+    print("database worker did not confirm shutdown within the deadline")
+    sys.exit(1)
+end
+print("NoxyDB server stopped")

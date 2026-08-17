@@ -91,6 +91,19 @@ def _reject_json_constant(value: str) -> object:
     raise json.JSONDecodeError("invalid JSON constant", value, 0)
 
 
+def _declared_content_type(error: urllib.error.HTTPError) -> str:
+    """Content-Type declarado na resposta de erro, normalizado.
+
+    Devolve "" quando o cabecalho esta ausente. `get_content_type()` sozinho
+    nao serve para isso: sem cabecalho ele assume o padrao MIME `text/plain`,
+    e uma resposta sem Content-Type nao e um erro de transporte.
+    """
+    headers = getattr(error, "headers", None)
+    if headers is None or headers.get("Content-Type") is None:
+        return ""
+    return headers.get_content_type()
+
+
 class NoxyDBClient:
     def __init__(self, base_url: str = "http://127.0.0.1:8765", timeout: float = 5.0) -> None:
         self.base_url = base_url.rstrip("/")
@@ -112,6 +125,17 @@ class NoxyDBClient:
         if not success:
             raise NoxyDBServerError(200, error)
         return Database(self, name)
+
+    def shutdown(self) -> None:
+        """Pede o encerramento do servidor.
+
+        So funciona contra um servidor iniciado com --enable-shutdown; sem a
+        flag a rota nao existe e o servidor responde 404.
+        """
+        response = self._request("/v1/shutdown", {})
+        success, error = _require_operation_result(response)
+        if not success:
+            raise NoxyDBServerError(200, error)
 
     def _request(
         self,
@@ -141,19 +165,36 @@ class NoxyDBClient:
                 raw = response.read()
         except urllib.error.HTTPError as error:
             try:
-                decoded_error = json.loads(
-                    error.read().decode("utf-8"),
-                    parse_constant=_reject_json_constant,
-                )
+                raw_error = error.read()
             except (
-                UnicodeDecodeError,
-                json.JSONDecodeError,
                 http.client.IncompleteRead,
                 TimeoutError,
                 socket.timeout,
                 OSError,
-            ) as decode_error:
-                raise NoxyDBConnectionError("invalid error response") from decode_error
+            ) as read_error:
+                raise NoxyDBConnectionError("invalid error response") from read_error
+            # Spec SS6.4: a classificacao vem do Content-Type, nunca do codigo
+            # sozinho. Erros da camada de transporte vem do http_server da
+            # stdlib como text/plain com a razao no corpo, e podem usar
+            # qualquer status -- inclusive 400, que a camada de transporte
+            # tambem emite (request line invalida, Content-Length duplicado,
+            # caracteres de controle em cabecalho). Uma lista fixa de codigos
+            # classificava esses 400 como falha de conexao e perdia o status.
+            if _declared_content_type(error) == "text/plain":
+                reason = raw_error.decode("utf-8", errors="replace").strip()
+                if not reason:
+                    raise NoxyDBConnectionError("invalid error response") from error
+                raise NoxyDBServerError(error.code, reason) from error
+            # application/json (ou sem Content-Type): e para ser o envelope
+            # {success, error} da API. Corpo que nao decodifica como JSON valido
+            # nesse canal e resposta corrompida, nao erro de transporte.
+            try:
+                decoded_error = json.loads(
+                    raw_error.decode("utf-8"),
+                    parse_constant=_reject_json_constant,
+                )
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                raise NoxyDBConnectionError("invalid error response") from error
             if (
                 not isinstance(decoded_error, dict)
                 or decoded_error.get("success") is not False

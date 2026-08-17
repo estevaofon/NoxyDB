@@ -18,8 +18,8 @@ if io.exists(path) then io.remove(path) end
 
 print("=== NoxyDB v0.2: documentos JSON ===")
 let db: noxydb.Database = noxydb.open_database(path)
-if !noxydb.is_open(db) then
-    fail("não foi possível abrir o banco: " + noxydb.database_error(db))
+if !noxydb.is_open(ref db) then
+    fail("não foi possível abrir o banco: " + noxydb.database_error(ref db))
 end
 
 let profile: map[string, any] = {"city": "Cuiabá", "country": "Brasil"}
@@ -36,13 +36,13 @@ let user: map[string, any] = {
     "profile": profile,
     "projects": projects
 }
-require_put(noxydb.put(db, "user:1", user), "falha ao gravar user:1")
+require_put(noxydb.put(ref db, "user:1", user), "falha ao gravar user:1")
 
 let settings: map[string, any] = {"theme": "dark", "notifications": true}
-require_put(noxydb.put(db, "settings", settings), "falha ao gravar settings")
+require_put(noxydb.put(ref db, "settings", settings), "falha ao gravar settings")
 print("Documentos gravados: user:1 e settings")
 
-let loaded: noxydb.LookupResult = noxydb.get(db, "user:1")
+let loaded: noxydb.LookupResult = noxydb.get(ref db, "user:1")
 if !loaded.found then fail("user:1 não foi encontrado") end
 let loaded_profile: map[string, any] = loaded.value["profile"]
 let loaded_projects: any[] = loaded.value["projects"]
@@ -58,34 +58,34 @@ let replacement: map[string, any] = {
     "active": false,
     "profile": replacement_profile
 }
-require_put(noxydb.put(db, "user:1", replacement), "falha ao substituir user:1")
-let replaced: noxydb.LookupResult = noxydb.get(db, "user:1")
+require_put(noxydb.put(ref db, "user:1", replacement), "falha ao substituir user:1")
+let replaced: noxydb.LookupResult = noxydb.get(ref db, "user:1")
 if !replaced.found then fail("user:1 desapareceu após a substituição") end
 if has_key(replaced.value, "age") then fail("put deveria substituir o documento completo") end
 print("Documento substituído; o campo age anterior não existe mais")
 
-noxydb.remove(db, "settings")
-if noxydb.exists(db, "settings") then fail("settings deveria ter sido removido") end
+noxydb.remove(ref db, "settings")
+if noxydb.exists(ref db, "settings") then fail("settings deveria ter sido removido") end
 print("Documento settings removido")
 
-noxydb.close_database(db)
-if noxydb.database_error(db) != "" then
-    fail("falha ao fechar o banco: " + noxydb.database_error(db))
+noxydb.close_database(ref db)
+if noxydb.database_error(ref db) != "" then
+    fail("falha ao fechar o banco: " + noxydb.database_error(ref db))
 end
 
 let reopened: noxydb.Database = noxydb.open_database(path)
-if !noxydb.is_open(reopened) then
-    fail("falha no replay: " + noxydb.database_error(reopened))
+if !noxydb.is_open(ref reopened) then
+    fail("falha no replay: " + noxydb.database_error(ref reopened))
 end
-let persisted: noxydb.LookupResult = noxydb.get(reopened, "user:1")
+let persisted: noxydb.LookupResult = noxydb.get(ref reopened, "user:1")
 if !persisted.found then fail("user:1 não sobreviveu ao replay") end
 if persisted.value["name"] != "Estevão Fonseca" then fail("replay retornou a versão errada") end
-if noxydb.exists(reopened, "settings") then fail("remoção não sobreviveu ao replay") end
+if noxydb.exists(ref reopened, "settings") then fail("remoção não sobreviveu ao replay") end
 print("Replay confirmado: substituição e remoção foram persistidas")
 
-noxydb.close_database(reopened)
-if noxydb.database_error(reopened) != "" then
-    fail("falha ao fechar o banco reaberto: " + noxydb.database_error(reopened))
+noxydb.close_database(ref reopened)
+if noxydb.database_error(ref reopened) != "" then
+    fail("falha ao fechar o banco reaberto: " + noxydb.database_error(ref reopened))
 end
 print("Banco mantido em " + path)
 print("=== Exemplo concluído ===")

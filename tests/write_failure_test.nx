@@ -2,42 +2,42 @@ use io
 use noxydb
 use tests.assertions as assertions
 
-func close_underlying_file(db: noxydb.Database) -> void
+func close_underlying_file(db: ref noxydb.Database) -> void
     let file: io.File = io.File(db.state.file_fd, db.state.path, "a", true)
     io.close(file)
 end
 
 let put_path: string = "tests/write_failure_put.db"
 if io.exists(put_path) then io.remove(put_path) end
+defer io.remove(put_path)
 let put_db: noxydb.Database = noxydb.open_database(put_path)
 let original: map[string, any] = {"number": 1}
 let replacement: map[string, any] = {"number": 2}
-assertions.assert_true(noxydb.put(put_db, "version", original).success, "initial put should succeed")
+assertions.assert_true(noxydb.put(ref put_db, "version", original).success, "initial put should succeed")
 let payload_before: string = put_db.state.payloads["version"]
 close_underlying_file(put_db)
-let failed_put: noxydb.PutResult = noxydb.put(put_db, "version", replacement)
+let failed_put: noxydb.PutResult = noxydb.put(ref put_db, "version", replacement)
 assertions.assert_false(failed_put.success, "failed append should fail put")
 assertions.assert_string(failed_put.error, "failed to write database log", "failed append should be returned")
 assertions.assert_string(put_db.state.payloads["version"], payload_before, "failed put should preserve raw payload")
-assertions.assert_false(noxydb.is_open(put_db), "failed put should fail database")
-assertions.assert_string(noxydb.database_error(put_db), "failed to write database log", "database error should be exact")
+assertions.assert_false(noxydb.is_open(ref put_db), "failed put should fail database")
+assertions.assert_string(noxydb.database_error(ref put_db), "failed to write database log", "database error should be exact")
 let ignored: map[string, any] = {"ignored": true}
-assertions.assert_false(noxydb.put(put_db, "later", ignored).success, "later put should be rejected")
+assertions.assert_false(noxydb.put(ref put_db, "later", ignored).success, "later put should be rejected")
 assertions.assert_false(has_key(put_db.state.payloads, "later"), "later put should not mutate state")
 
 let remove_path: string = "tests/write_failure_remove.db"
 if io.exists(remove_path) then io.remove(remove_path) end
+defer io.remove(remove_path)
 let remove_db: noxydb.Database = noxydb.open_database(remove_path)
 let author: map[string, any] = {"name": "Estevao"}
-assertions.assert_true(noxydb.put(remove_db, "author", author).success, "author should store")
+assertions.assert_true(noxydb.put(ref remove_db, "author", author).success, "author should store")
 let author_payload: string = remove_db.state.payloads["author"]
 close_underlying_file(remove_db)
-noxydb.remove(remove_db, "author")
-assertions.assert_false(noxydb.is_open(remove_db), "failed remove should fail database")
-assertions.assert_string(noxydb.database_error(remove_db), "failed to write database log", "remove error should be exact")
+noxydb.remove(ref remove_db, "author")
+assertions.assert_false(noxydb.is_open(ref remove_db), "failed remove should fail database")
+assertions.assert_string(noxydb.database_error(ref remove_db), "failed to write database log", "remove error should be exact")
 assertions.assert_true(has_key(remove_db.state.payloads, "author"), "failed remove should preserve key")
 assertions.assert_string(remove_db.state.payloads["author"], author_payload, "failed remove should preserve payload")
 
-if io.exists(put_path) then io.remove(put_path) end
-if io.exists(remove_path) then io.remove(remove_path) end
 print("[PASS] write_failure_test")

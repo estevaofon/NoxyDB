@@ -14,8 +14,8 @@ end
 func assert_invalid(path: string, content: string, expected_error: string) -> void
     write_fixture(path, content)
     let db: noxydb.Database = noxydb.open_database(path)
-    assertions.assert_false(noxydb.is_open(db), "invalid log should not open: " + path)
-    assertions.assert_string(noxydb.database_error(db), expected_error, "invalid log should expose the exact error: " + path)
+    assertions.assert_false(noxydb.is_open(ref db), "invalid log should not open: " + path)
+    assertions.assert_string(noxydb.database_error(ref db), expected_error, "invalid log should expose the exact error: " + path)
     assertions.assert_true(length(keys(db.state.payloads)) == 0, "invalid log should expose no partial state: " + path)
 
     let file: io.File = io.open(path, "r")

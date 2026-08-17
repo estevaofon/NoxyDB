@@ -1,0 +1,36 @@
+use noxydb
+use server.protocol as protocol
+use server.database_worker as worker
+use tests.assertions as assertions
+
+func exploding_execute(databases: ref map[string, noxydb.Database], data_dir: string, command: worker.DatabaseCommand) -> protocol.ApiResponse
+    let boom: int = to_int("nao eh numero")
+    return protocol.api_success({"success": true, "error": ""})
+end
+
+func noop_close(databases: ref map[string, noxydb.Database]) -> void
+end
+
+// 1. Encerramento normal confirma pelo canal de handshake.
+let ok_commands: chan any = make_chan(4)
+let ok_done: chan any = make_chan(1)
+let ok_task: any = spawn_task(worker.run_database_worker, ok_commands, ok_done, "tests", worker.execute_database_command, worker.close_all_databases)
+chan_close(ok_commands)
+let ack: any = chan_recv(ok_done)
+assertions.assert_true(ack == true, "worker deve confirmar o fechamento antes de sair")
+let ok_outcome: any = task_await(ok_task, 5000)
+assertions.assert_string(to_str(ok_outcome["status"]), "ok", "encerramento normal deve terminar em ok")
+
+// 2. Um worker que levanta e observavel pelo handle, nao silencioso.
+let bad_commands: chan any = make_chan(4)
+let bad_done: chan any = make_chan(1)
+let bad_task: any = spawn_task(worker.run_database_worker, bad_commands, bad_done, "tests", exploding_execute, noop_close)
+let reply: any = make_chan(0)
+let empty_value: map[string, any] = {}
+chan_send(bad_commands, worker.DatabaseCommand("get", "db", "k", empty_value, reply))
+let bad_outcome: any = task_await(bad_task, 5000)
+assertions.assert_string(to_str(bad_outcome["status"]), "error", "worker que levanta deve ser observavel")
+let failure: map[string, any] = bad_outcome["error"]
+assertions.assert_string(to_str(failure["kind"]), "runtime", "falha deve ser classificada como runtime")
+
+print("[PASS] worker_supervision_test")

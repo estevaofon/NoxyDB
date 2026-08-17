@@ -1,0 +1,108 @@
+use json
+use strings
+use time
+use http_parser select *
+use http_server select *
+use server.protocol as protocol
+use server.database_worker as worker
+
+func operation_for(method: string, path: string) -> string
+    if method == "POST" && path == "/v1/open" then return "open" end
+    if method == "POST" && path == "/v1/put" then return "put" end
+    if method == "POST" && path == "/v1/get" then return "get" end
+    if method == "POST" && path == "/v1/exists" then return "exists" end
+    if method == "POST" && path == "/v1/remove" then return "remove" end
+    if method == "POST" && path == "/v1/close" then return "close" end
+    return ""
+end
+
+func known_path(path: string) -> bool
+    if path == "/v1/health" then return true end
+    if path == "/v1/open" then return true end
+    if path == "/v1/put" then return true end
+    if path == "/v1/get" then return true end
+    if path == "/v1/exists" then return true end
+    if path == "/v1/remove" then return true end
+    if path == "/v1/close" then return true end
+    return false
+end
+
+func quoted_log_value(value: string) -> string
+    let encoded: json.EncodeResult = json.dumps_result(value)
+    if encoded.success then return encoded.data end
+    return "\"<invalid>\""
+end
+
+// Remove apenas as aspas externas do JSON. O terceiro argumento de substring
+// e um indice final EXCLUSIVO: length - 1 descarta a aspa final.
+func escaped_log_field(value: string) -> string
+    let encoded: json.EncodeResult = json.dumps_result(value)
+    if !encoded.success || length(encoded.data) < 2 then return "<invalid>" end
+    return strings.substring(encoded.data, 1, length(encoded.data) - 1)
+end
+
+func build_activity_line(method: string, path: string, body: bytes, status: int, duration_ms: int, timestamp: string) -> string
+    let shown_method: string = method
+    let shown_path: string = path
+    if shown_method == "" then shown_method = "UNKNOWN" end
+    if shown_path == "" then shown_path = "-" end
+
+    let line: string = timestamp + " " + escaped_log_field(shown_method) + " " + escaped_log_field(shown_path)
+    let operation: string = operation_for(method, path)
+    if operation != "" then
+        let decoded: protocol.ApiRequest = protocol.decode_api_request(operation, body)
+        if decoded.valid then
+            line = line + " database=" + decoded.database
+            if operation == "put" || operation == "get" || operation == "exists" || operation == "remove" then
+                line = line + " key=" + quoted_log_value(decoded.key)
+            end
+        end
+    end
+
+    let elapsed_ms: int = duration_ms
+    if elapsed_ms < 0 then elapsed_ms = 0 end
+    return line + " status=" + to_str(status) + " duration_ms=" + to_str(elapsed_ms)
+end
+
+func reason_phrase(status: int) -> string
+    if status == 200 then return "OK" end
+    if status == 400 then return "Bad Request" end
+    if status == 404 then return "Not Found" end
+    if status == 405 then return "Method Not Allowed" end
+    if status == 409 then return "Conflict" end
+    return "Internal Server Error"
+end
+
+// Preserva o corpo JSON da API mesmo em status de erro. response_json devolve
+// 200 com application/json; sobrescrever o status mantem o Content-Type.
+func json_response(response: protocol.ApiResponse) -> HttpResponse
+    let built: HttpResponse = response_json(response.json)
+    built.status_code = response.status
+    built.status_text = reason_phrase(response.status)
+    return built
+end
+
+func route(method: string, path: string, body: bytes, commands: chan any, shutdown_enabled: bool, shutdown_signal: chan any) -> protocol.ApiResponse
+    if method == "GET" && path == "/v1/health" then
+        return protocol.api_success({"success": true, "status": "ok"})
+    end
+    if path == "/v1/shutdown" then
+        if !shutdown_enabled then return protocol.api_error(404, "not found") end
+        if method != "POST" then return protocol.api_error(405, "method not allowed") end
+        chan_send(shutdown_signal, true)
+        return protocol.api_success({"success": true, "error": ""})
+    end
+    let operation: string = operation_for(method, path)
+    if operation == "" then
+        if known_path(path) then return protocol.api_error(405, "method not allowed") end
+        return protocol.api_error(404, "not found")
+    end
+    let decoded: protocol.ApiRequest = protocol.decode_api_request(operation, body)
+    if !decoded.valid then return protocol.api_error(400, decoded.error) end
+    let reply: any = make_chan(0)
+    let command: worker.DatabaseCommand = worker.DatabaseCommand(decoded.operation, decoded.database, decoded.key, decoded.value, reply)
+    chan_send(commands, command)
+    let response: protocol.ApiResponse = chan_recv(reply)
+    chan_close(reply)
+    return response
+end

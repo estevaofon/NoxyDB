@@ -6,8 +6,8 @@ if io.exists(path) then io.remove(path) end
 let db: noxydb.Database = noxydb.open_database(path)
 let language: map[string, any] = {"name": "Noxy"}
 let author: map[string, any] = {"name": "Estevao"}
-noxydb.put(db, "language", language)
-noxydb.put(db, "author", author)
-noxydb.remove(db, "author")
-noxydb.close_database(db)
+noxydb.put(ref db, "language", language)
+noxydb.put(ref db, "author", author)
+noxydb.remove(ref db, "author")
+noxydb.close_database(ref db)
 print("[PASS] deleted_write_test")

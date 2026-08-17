@@ -4,11 +4,11 @@ use tests.assertions as assertions
 
 let path: string = "tests/deleted.db"
 let db: noxydb.Database = noxydb.open_database(path)
-assertions.assert_true(noxydb.is_open(db), "deleted reader should open")
-assertions.assert_false(noxydb.get(db, "author").found, "deleted key should remain absent")
-let language: noxydb.LookupResult = noxydb.get(db, "language")
+assertions.assert_true(noxydb.is_open(ref db), "deleted reader should open")
+assertions.assert_false(noxydb.get(ref db, "author").found, "deleted key should remain absent")
+let language: noxydb.LookupResult = noxydb.get(ref db, "language")
 assertions.assert_true(language.found, "unrelated key should survive")
 assertions.assert_true(language.value["name"] == "Noxy", "unrelated document should survive")
-noxydb.close_database(db)
+noxydb.close_database(ref db)
 io.remove(path)
 print("[PASS] deleted_read_test")

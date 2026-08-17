@@ -26,7 +26,14 @@ class _RecordingServer(ThreadingHTTPServer):
     def __init__(self) -> None:
         super().__init__(("127.0.0.1", 0), _RequestHandler)
         self.requests: list[dict[str, Any]] = []
-        self.responses: list[tuple[int, object] | tuple[int, object, int]] = []
+        # (status, body) e o formato base. Os elementos extras opcionais sao
+        # posicionais mas identificados pelo tipo: um int sobrescreve o
+        # Content-Length declarado (para simular respostas truncadas) e uma str
+        # sobrescreve o Content-Type (para simular erros de transporte, que o
+        # http_server da stdlib responde como text/plain, nao como JSON).
+        self.responses: list[
+            tuple[int, object] | tuple[int, object, int] | tuple[int, object, str]
+        ] = []
 
 
 class _RequestHandler(BaseHTTPRequestHandler):
@@ -61,9 +68,17 @@ class _RequestHandler(BaseHTTPRequestHandler):
                 ensure_ascii=False,
                 separators=(",", ":"),
             ).encode("utf-8")
+        extras = queued_response[2:]
+        content_type = next(
+            (extra for extra in extras if isinstance(extra, str)),
+            "application/json; charset=utf-8",
+        )
+        content_length = next(
+            (extra for extra in extras if isinstance(extra, int)),
+            len(encoded),
+        )
         self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        content_length = queued_response[2] if len(queued_response) == 3 else len(encoded)
+        self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(content_length))
         self.end_headers()
         self.wfile.write(encoded)
@@ -555,6 +570,64 @@ class ClientTests(unittest.TestCase):
                         self.assertIsInstance(error, NoxyDBConnectionError)
                     else:
                         self.fail(f"server response accepted non-JSON constant {constant!r}")
+
+    def test_plain_text_error_body_becomes_server_error(self) -> None:
+        # Erros de transporte do http_server da stdlib chegam como texto cru,
+        # nao como o envelope JSON da API. O Content-Type text/plain e o que o
+        # cliente usa para distinguir os dois canais (spec SS6.4).
+        self.server.responses.append((413, b"Content Too Large", "text/plain"))
+        with self.assertRaises(NoxyDBServerError) as captured:
+            self.client.health()
+        self.assertEqual(captured.exception.status, 413)
+        self.assertEqual(str(captured.exception), "Content Too Large")
+
+    def test_timeout_status_is_preserved(self) -> None:
+        self.server.responses.append((408, b"Request Timeout", "text/plain"))
+        with self.assertRaises(NoxyDBServerError) as captured:
+            self.client.health()
+        self.assertEqual(captured.exception.status, 408)
+
+    def test_transport_errors_are_classified_by_content_type_not_by_status(self) -> None:
+        # A camada de transporte tambem responde 400 em text/plain (request
+        # line invalida, Content-Length duplicado, controle em cabecalho). Uma
+        # lista fixa de codigos perdia esse status e virava erro de conexao.
+        self.server.responses.append((400, b"Bad Request Line", "text/plain"))
+        with self.assertRaises(NoxyDBServerError) as captured:
+            self.client.health()
+        self.assertEqual(captured.exception.status, 400)
+        self.assertEqual(str(captured.exception), "Bad Request Line")
+
+    def test_json_error_bodies_still_use_the_api_envelope(self) -> None:
+        # O mesmo status em application/json continua sendo lido como envelope
+        # estruturado, e um envelope malformado continua sendo erro de conexao.
+        self.server.responses.append((400, {"success": False, "error": "invalid JSON request"}))
+        with self.assertRaises(NoxyDBServerError) as captured:
+            self.client.health()
+        self.assertEqual(captured.exception.status, 400)
+        self.assertEqual(str(captured.exception), "invalid JSON request")
+
+        self.server.responses.append((400, b"nao e json", "application/json"))
+        with self.assertRaises(NoxyDBConnectionError):
+            self.client.health()
+
+    def test_empty_error_body_is_a_connection_error(self) -> None:
+        self.server.responses.append((500, b"", "text/plain"))
+        with self.assertRaises(NoxyDBConnectionError):
+            self.client.health()
+
+    def test_shutdown_posts_to_the_shutdown_route(self) -> None:
+        self.server.responses.append((200, {"success": True, "error": ""}))
+        self.client.shutdown()
+        request = self.server.requests[-1]
+        self.assertEqual(request["method"], "POST")
+        self.assertEqual(request["path"], "/v1/shutdown")
+
+    def test_shutdown_reports_a_missing_route(self) -> None:
+        # Servidor iniciado sem --enable-shutdown responde 404 nesta rota.
+        self.server.responses.append((404, {"success": False, "error": "not found"}))
+        with self.assertRaises(NoxyDBServerError) as captured:
+            self.client.shutdown()
+        self.assertEqual(captured.exception.status, 404)
 
 
 if __name__ == "__main__":

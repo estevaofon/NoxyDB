@@ -37,8 +37,12 @@ $coreTests = @(
     "document_codec_test.nx",
     "document_isolation_test.nx",
     "write_failure_test.nx",
-    "close_failure_test.nx"
+    "close_failure_test.nx",
+    "read_before_write_regression_test.nx"
 )
+# ORDEM SIGNIFICATIVA: cada *_write_test.nx deixa o .db que o *_read_test.nx
+# seguinte consome. Alfabetizar este array faz o read consumir o arquivo da
+# execucao anterior e mascara falhas.
 $persistenceTests = @(
     "persistence_write_test.nx",
     "persistence_read_test.nx",
@@ -51,13 +55,15 @@ $persistenceTests = @(
 $errorTests = @(
     "invalid_log_test.nx",
     "invalid_document_log_test.nx",
+    "invalid_hex_utf8_test.nx",
     "open_failure_test.nx",
     "read_size_test.nx"
 )
 $serverTests = @(
     "server_protocol_test.nx",
     "database_worker_test.nx",
-    "http_transport_test.nx"
+    "worker_supervision_test.nx",
+    "api_test.nx"
 )
 
 $tests = if (-not [string]::IsNullOrWhiteSpace($Test)) {

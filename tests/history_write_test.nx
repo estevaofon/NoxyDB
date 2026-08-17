@@ -8,10 +8,10 @@ let one: map[string, any] = {"number": 1}
 let two: map[string, any] = {"number": 2}
 let three: map[string, any] = {"number": 3}
 let four: map[string, any] = {"number": 4}
-noxydb.put(db, "version", one)
-noxydb.put(db, "version", two)
-noxydb.put(db, "version", three)
-noxydb.remove(db, "version")
-noxydb.put(db, "version", four)
-noxydb.close_database(db)
+noxydb.put(ref db, "version", one)
+noxydb.put(ref db, "version", two)
+noxydb.put(ref db, "version", three)
+noxydb.remove(ref db, "version")
+noxydb.put(ref db, "version", four)
+noxydb.close_database(ref db)
 print("[PASS] history_write_test")

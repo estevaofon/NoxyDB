@@ -4,33 +4,33 @@ use tests.assertions as assertions
 
 let path: string = "tests/document_isolation.db"
 if io.exists(path) then io.remove(path) end
+defer io.remove(path)
 let db: noxydb.Database = noxydb.open_database(path)
 let nested: map[string, any] = {"city": "Cuiabá"}
 let first_item: map[string, any] = {"id": 1}
 let input: map[string, any] = {"name": "Estevão", "profile": nested, "items": [first_item]}
-assertions.assert_true(noxydb.put(db, "user", input).success, "document should store")
+assertions.assert_true(noxydb.put(ref db, "user", input).success, "document should store")
 let payload_before: string = db.state.payloads["user"]
 
 nested["city"] = "Changed after put"
 input["name"] = "Changed after put"
 assertions.assert_string(db.state.payloads["user"], payload_before, "input mutation should not change raw state")
 
-let first: noxydb.LookupResult = noxydb.get(db, "user")
+let first: noxydb.LookupResult = noxydb.get(ref db, "user")
 let first_profile: map[string, any] = first.value["profile"]
 first.value["name"] = "Changed after get"
 first_profile["city"] = "Changed after get"
-let second: noxydb.LookupResult = noxydb.get(db, "user")
+let second: noxydb.LookupResult = noxydb.get(ref db, "user")
 let second_profile: map[string, any] = second.value["profile"]
 assertions.assert_true(second.value["name"] == "Estevão", "later get should retain original name")
 assertions.assert_true(second_profile["city"] == "Cuiabá", "nested get results should not be shared")
 assertions.assert_string(db.state.payloads["user"], payload_before, "get mutation should not change raw state")
 
-noxydb.close_database(db)
+noxydb.close_database(ref db)
 let reopened: noxydb.Database = noxydb.open_database(path)
-let persisted: noxydb.LookupResult = noxydb.get(reopened, "user")
+let persisted: noxydb.LookupResult = noxydb.get(ref reopened, "user")
 let persisted_profile: map[string, any] = persisted.value["profile"]
 assertions.assert_true(persisted.value["name"] == "Estevão", "input mutation should not persist")
 assertions.assert_true(persisted_profile["city"] == "Cuiabá", "get mutation should not persist")
-noxydb.close_database(reopened)
-io.remove(path)
+noxydb.close_database(ref reopened)
 print("[PASS] document_isolation_test")
